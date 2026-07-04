@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import urllib.request
 from base64 import b64decode
 from dataclasses import dataclass
@@ -103,6 +104,20 @@ class FeishuEventAdapter:
         try:
             payload = self.decrypt_payload_if_needed(payload)
         except Exception as exc:
+            print(
+                json.dumps(
+                    {
+                        "event": "feishu_decrypt_error",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                        "payload_keys": sorted(payload.keys()),
+                        "encrypt_len": len(str(payload.get("encrypt", ""))),
+                    },
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
             return FeishuEventResult(
                 400,
                 {
