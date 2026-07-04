@@ -343,6 +343,6 @@ def portfolio_context(plan: ThreeDayTradePlan) -> dict[str, Any]:
         "capital": plan.capital,
         "invested_cost": plan.invested_cost,
         "available_cash": plan.available_cash,
-        "max_trade_cash": plan.max_trade_cash,
+        "rotation_cash": plan.rotation_cash,
         "notes": list(plan.notes),
     }

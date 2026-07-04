@@ -1942,7 +1942,8 @@ class ThreeDayTradePlanTest(unittest.TestCase):
         buy_codes = [item.code for item in plan.buy_plans]
         self.assertNotIn("600036", buy_codes)
         self.assertNotIn("300308", buy_codes)
-        self.assertLessEqual(sum(item.lot_cost for item in plan.buy_plans), plan.available_cash)
+        self.assertGreater(plan.rotation_cash, plan.available_cash)
+        self.assertLessEqual(sum(item.lot_cost for item in plan.buy_plans), plan.rotation_cash)
         self.assertEqual(len(plan.buy_plans), 3)
         self.assertTrue(any(item.code == "600938" and item.model_pct_rank == 0.93 for item in plan.buy_plans))
 

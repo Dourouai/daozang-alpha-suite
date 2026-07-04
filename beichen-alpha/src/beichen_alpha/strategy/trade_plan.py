@@ -52,7 +52,7 @@ class ThreeDayTradePlan:
     capital: float
     invested_cost: float
     available_cash: float
-    max_trade_cash: float
+    rotation_cash: float
     holding_plans: tuple[HoldingPlan, ...]
     buy_plans: tuple[BuyPlan, ...]
     notes: tuple[str, ...]
@@ -64,7 +64,7 @@ def build_three_day_trade_plan(
     capital: float = 10000.0,
     top_n: int = 3,
     lot_size: int = 100,
-    max_trade_pct: float = 0.35,
+    max_trade_pct: float | None = None,
     model_scores: dict[str, float] | None = None,
     review_date: date | datetime | str | None = None,
     trading_dates: Iterable[date | datetime | str] | None = None,
@@ -73,7 +73,6 @@ def build_three_day_trade_plan(
     held_codes = {str(item["code"]) for item in positions}
     invested_cost = sum(float(item["cost"]) * int(item["shares"]) for item in positions)
     available_cash = max(capital - invested_cost, 0.0)
-    max_trade_cash = max(capital * max_trade_pct, 0.0)
     normalized_review_date = parse_position_date(review_date)
     normalized_trading_dates = tuple(parse_position_date(item) for item in (trading_dates or ()))
 
@@ -86,12 +85,14 @@ def build_three_day_trade_plan(
         )
         for item in positions
     )
+    rotation_cash = min(capital, available_cash + releasable_holding_value(holding_plans))
+    if max_trade_pct is not None:
+        rotation_cash = min(rotation_cash, max(capital * max_trade_pct, 0.0))
     held_groups = {infer_trade_group(plan.name) for plan in holding_plans}
     candidates = [
         build_buy_plan(
             item,
-            available_cash=available_cash,
-            max_trade_cash=max_trade_cash,
+            cash_budget=rotation_cash,
             lot_size=lot_size,
             model_pct_rank=(model_scores or {}).get(item.code),
         )
@@ -102,7 +103,7 @@ def build_three_day_trade_plan(
     selected = choose_buy_plans(
         candidates,
         top_n=top_n,
-        cash_limit=available_cash,
+        cash_limit=rotation_cash,
         held_groups=held_groups,
     )
     notes = (
@@ -115,7 +116,7 @@ def build_three_day_trade_plan(
         capital=capital,
         invested_cost=invested_cost,
         available_cash=available_cash,
-        max_trade_cash=max_trade_cash,
+        rotation_cash=rotation_cash,
         holding_plans=holding_plans,
         buy_plans=tuple(selected),
         notes=notes,
@@ -294,14 +295,12 @@ def parse_position_date(value: date | datetime | str | None) -> date | None:
 
 def build_buy_plan(
     recommendation: Recommendation,
-    available_cash: float,
-    max_trade_cash: float,
+    cash_budget: float,
     lot_size: int,
     model_pct_rank: float | None,
 ) -> BuyPlan:
     lot_cost = recommendation.close * lot_size
-    budget = min(available_cash, max_trade_cash)
-    max_lots = int(budget // lot_cost) if lot_cost > 0 else 0
+    max_lots = int(cash_budget // lot_cost) if lot_cost > 0 else 0
     target = recommendation.take_profit_price
     chase_line = recommendation.confirm_price * 1.012
     trigger = (
@@ -327,6 +326,15 @@ def build_buy_plan(
         model_pct_rank=model_pct_rank,
         trigger=trigger,
         risk=risk,
+    )
+
+
+def releasable_holding_value(holding_plans: Iterable[HoldingPlan]) -> float:
+    releasable_actions = {"资金效率观察", "时间止损优先", "退出优先", "买点弱化", "止盈优先"}
+    return sum(
+        max(item.price, 0.0) * item.shares
+        for item in holding_plans
+        if item.action in releasable_actions
     )
 
 

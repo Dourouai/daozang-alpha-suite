@@ -11,7 +11,7 @@ def render_three_day_trade_plan(plan: ThreeDayTradePlan) -> str:
         f"- 总资金: {plan.capital:.2f}",
         f"- 已占用成本: {plan.invested_cost:.2f}",
         f"- 可用现金估算: {plan.available_cash:.2f}",
-        f"- 单笔预算上限: {plan.max_trade_cash:.2f}",
+        f"- 调仓轮动预算: {plan.rotation_cash:.2f}",
         "",
         "已有持仓",
     ]

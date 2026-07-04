@@ -620,7 +620,7 @@ def trade_plan_main(argv: list[str]) -> int:
     parser.add_argument("--review-date", default="", help="holding review date, YYYYMMDD; default uses --end")
     parser.add_argument("--capital", type=float, default=10000.0, help="account capital for planning")
     parser.add_argument("--top", type=int, default=3, help="number of buy candidates")
-    parser.add_argument("--max-trade-pct", type=float, default=0.35, help="single trade budget as capital fraction")
+    parser.add_argument("--max-trade-pct", type=float, default=None, help="optional single trade budget cap as capital fraction")
     parser.add_argument("--model-scores", default="../daozang-alpha/data/exports/alpha_scores_latest.csv", help="Daozang latest score CSV")
     parser.add_argument("--notify", choices=["none", "feishu"], default="none", help="send plan to Feishu")
     parser.add_argument("--decision-log", default=str(DEFAULT_DECISION_LOG_PATH), help="local JSONL decision log path")
