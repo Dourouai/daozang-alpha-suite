@@ -211,6 +211,8 @@ def holding_plan_to_record(
                 "cost_basis": item.cost * item.shares,
                 "pnl": item.pnl,
                 "pnl_pct": item.pnl_pct,
+                "entry_date": item.entry_date,
+                "holding_trade_days": item.holding_trade_days,
             },
             "portfolio": portfolio_context(plan),
             "rationale": {

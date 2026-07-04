@@ -86,6 +86,7 @@ If no example file exists yet, create `data/positions/current_positions.json` ma
       "code": "600036",
       "name": "招商银行",
       "shares": 100,
+      "entry_date": "2026-07-03",
       "cost": 36.89,
       "confirm": 36.80,
       "invalid": 35.28,

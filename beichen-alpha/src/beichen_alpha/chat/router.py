@@ -161,6 +161,7 @@ def render_positions(root: Path, quote_loader: QuoteLoader | None = None) -> str
             (
                 f"- {item.get('name') or item.get('code')} {item.get('code')}: "
                 f"{item.get('shares')} 股 | 成本 {float(item.get('cost', 0)):.2f} | "
+                f"入场 {item.get('entry_date') or '-'} | "
                 f"现价 {fmt(current)} | 浮盈亏 {pnl_text} | "
                 f"确认 {float(item.get('confirm', 0)):.2f} | "
                 f"止损 {float(item.get('invalid', 0)):.2f} | "

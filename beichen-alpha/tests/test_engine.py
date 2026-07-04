@@ -1753,6 +1753,7 @@ class ThreeDayTradePlanTest(unittest.TestCase):
                 "code": "600025",
                 "name": "华能水电",
                 "shares": 100,
+                "entry_date": "2026-07-03",
                 "cost": 9.24,
                 "confirm": 9.17,
                 "invalid": 8.79,
@@ -1827,6 +1828,7 @@ class ThreeDayTradePlanTest(unittest.TestCase):
                 "code": "600025",
                 "name": "华能水电",
                 "shares": 100,
+                "entry_date": "2026-07-03",
                 "cost": 9.24,
                 "confirm": 9.17,
                 "invalid": 8.79,
@@ -1848,10 +1850,60 @@ class ThreeDayTradePlanTest(unittest.TestCase):
             take_profit_price=9.78,
         )
 
-        plan = build_three_day_trade_plan([recommendation], positions, capital=10000, top_n=0)
+        plan = build_three_day_trade_plan(
+            [recommendation],
+            positions,
+            capital=10000,
+            top_n=0,
+            review_date=datetime(2026, 7, 6),
+            trading_dates=["2026-07-03", "2026-07-06"],
+        )
 
         self.assertEqual(plan.holding_plans[0].action, "资金效率观察")
+        self.assertEqual(plan.holding_plans[0].entry_date, "2026-07-03")
+        self.assertEqual(plan.holding_plans[0].holding_trade_days, 2)
         self.assertIn("轮动到更强候选", plan.holding_plans[0].trigger)
+
+    def test_holding_day_three_without_progress_uses_time_stop(self):
+        positions = [
+            {
+                "code": "600025",
+                "name": "华能水电",
+                "shares": 100,
+                "entry_date": "2026-07-03",
+                "cost": 9.24,
+                "confirm": 9.17,
+                "invalid": 8.79,
+                "target": 9.78,
+            }
+        ]
+        recommendation = Recommendation(
+            code="600025",
+            name="华能水电",
+            score=98,
+            status="条件执行",
+            close=9.22,
+            observation_zone="9.10-9.25",
+            confirm_price=9.17,
+            invalid_price=8.79,
+            reason="测试",
+            risk="-",
+            candidate_score=98,
+            take_profit_price=9.78,
+        )
+
+        plan = build_three_day_trade_plan(
+            [recommendation],
+            positions,
+            capital=10000,
+            top_n=0,
+            review_date=datetime(2026, 7, 7),
+            trading_dates=["2026-07-03", "2026-07-06", "2026-07-07"],
+        )
+
+        self.assertEqual(plan.holding_plans[0].action, "时间止损优先")
+        self.assertEqual(plan.holding_plans[0].holding_trade_days, 3)
+        self.assertIn("优先减仓或退出", plan.holding_plans[0].trigger)
 
 
 class DecisionLogTest(unittest.TestCase):
@@ -1884,6 +1936,7 @@ class DecisionLogTest(unittest.TestCase):
                 "code": "600036",
                 "name": "招商银行",
                 "shares": 100,
+                "entry_date": "2026-07-03",
                 "cost": 36.89,
                 "confirm": 36.80,
                 "invalid": 35.28,
@@ -1915,6 +1968,8 @@ class DecisionLogTest(unittest.TestCase):
         self.assertEqual(buy["code"], "600028")
         self.assertEqual(buy["scores"]["model_pct_rank"], 0.61)
         self.assertEqual(buy["portfolio"]["available_cash"], plan.available_cash)
+        holding = next(record for record in records if record["decision_kind"] == "holding_review")
+        self.assertEqual(holding["sizing"]["entry_date"], "2026-07-03")
 
 
 class ChatAdapterTest(unittest.TestCase):

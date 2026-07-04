@@ -20,10 +20,16 @@ if [ -n "${FEISHU_WEBHOOK:-}" ]; then
   notify_args=(--notify feishu)
 fi
 
+review_args=()
+if [ -n "${BEICHEN_REVIEW_DATE:-}" ]; then
+  review_args=(--review-date "${BEICHEN_REVIEW_DATE}")
+fi
+
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m beichen_alpha trade-plan \
   --positions data/positions/current_positions.json \
   --watchlist data/watchlists/broad_target_pool_2026-07-03.txt \
   --model-scores ../daozang-alpha/data/exports/alpha_scores_latest.csv \
   --capital 10000 \
   --top 3 \
+  "${review_args[@]}" \
   "${notify_args[@]}"

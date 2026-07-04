@@ -4,8 +4,9 @@ import csv
 import itertools
 import json
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from beichen_alpha.models import Recommendation
 
@@ -20,6 +21,8 @@ class HoldingPlan:
     confirm: float
     stop: float
     target: float
+    entry_date: str
+    holding_trade_days: int | None
     pnl: float
     pnl_pct: float
     action: str
@@ -63,15 +66,24 @@ def build_three_day_trade_plan(
     lot_size: int = 100,
     max_trade_pct: float = 0.35,
     model_scores: dict[str, float] | None = None,
+    review_date: date | datetime | str | None = None,
+    trading_dates: Iterable[date | datetime | str] | None = None,
 ) -> ThreeDayTradePlan:
     by_code = {item.code: item for item in recommendations}
     held_codes = {str(item["code"]) for item in positions}
     invested_cost = sum(float(item["cost"]) * int(item["shares"]) for item in positions)
     available_cash = max(capital - invested_cost, 0.0)
     max_trade_cash = max(capital * max_trade_pct, 0.0)
+    normalized_review_date = parse_position_date(review_date)
+    normalized_trading_dates = tuple(parse_position_date(item) for item in (trading_dates or ()))
 
     holding_plans = tuple(
-        build_holding_plan(item, by_code.get(str(item["code"])))
+        build_holding_plan(
+            item,
+            by_code.get(str(item["code"])),
+            review_date=normalized_review_date,
+            trading_dates=normalized_trading_dates,
+        )
         for item in positions
     )
     held_groups = {infer_trade_group(plan.name) for plan in holding_plans}
@@ -110,7 +122,13 @@ def build_three_day_trade_plan(
     )
 
 
-def build_holding_plan(position: dict[str, Any], recommendation: Recommendation | None) -> HoldingPlan:
+def build_holding_plan(
+    position: dict[str, Any],
+    recommendation: Recommendation | None,
+    *,
+    review_date: date | None = None,
+    trading_dates: Iterable[date | None] = (),
+) -> HoldingPlan:
     code = str(position["code"])
     name = str(position.get("name") or code)
     shares = int(position["shares"])
@@ -118,6 +136,9 @@ def build_holding_plan(position: dict[str, Any], recommendation: Recommendation 
     confirm = float(position["confirm"])
     stop = float(position["invalid"])
     target = float(position["target"])
+    entry_date = parse_position_date(position.get("entry_date"))
+    entry_date_text = entry_date.isoformat() if entry_date is not None else str(position.get("entry_date") or "")
+    holding_trade_days = calc_holding_trade_days(entry_date, review_date, trading_dates)
     price = recommendation.close if recommendation is not None else cost
     pnl = (price - cost) * shares
     pnl_pct = price / cost - 1 if cost else 0.0
@@ -134,11 +155,18 @@ def build_holding_plan(position: dict[str, Any], recommendation: Recommendation 
     elif price >= target:
         action = "止盈优先"
         trigger = f"到达目标价 {target:.2f} 附近，分批止盈或上移保护线。"
-    elif has_low_capital_efficiency(recommendation, pnl_pct, price, confirm):
+    elif has_time_stop_pressure(holding_trade_days, pnl_pct, price, confirm):
+        action = "时间止损优先"
+        trigger = (
+            f"{holding_age_text(holding_trade_days)}，仍未形成有效盈利/脱离确认区；"
+            "若10:30前无放量延续，优先减仓或退出，把资金轮动到更强候选。"
+        )
+    elif has_low_capital_efficiency(recommendation, pnl_pct, price, confirm, holding_trade_days):
         action = "资金效率观察"
         trigger = (
-            f"仍在确认价 {confirm:.2f} 上方，但近期短线弹性不足且仍在成本附近；"
-            "周一若10:30前不放量脱离成本/确认区，考虑减仓释放资金，轮动到更强候选。"
+            f"{holding_age_text(holding_trade_days)}，仍在确认价 {confirm:.2f} 上方，"
+            "但短线弹性不足且仍在成本附近；若10:30前不放量脱离成本/确认区，"
+            "考虑减仓释放资金，轮动到更强候选。"
         )
     else:
         action = "继续持有"
@@ -153,6 +181,8 @@ def build_holding_plan(position: dict[str, Any], recommendation: Recommendation 
         confirm=confirm,
         stop=stop,
         target=target,
+        entry_date=entry_date_text,
+        holding_trade_days=holding_trade_days,
         pnl=pnl,
         pnl_pct=pnl_pct,
         action=action,
@@ -165,6 +195,7 @@ def has_low_capital_efficiency(
     pnl_pct: float,
     price: float,
     confirm: float,
+    holding_trade_days: int | None,
 ) -> bool:
     if recommendation is None:
         return False
@@ -172,10 +203,85 @@ def has_low_capital_efficiency(
         return False
     if "短线弹性" in recommendation.risk:
         return True
+    if holding_trade_days is not None and holding_trade_days < 2:
+        return False
     if confirm <= 0:
         return False
     confirm_gap = price / confirm - 1
     return price >= confirm and confirm_gap <= 0.006
+
+
+def has_time_stop_pressure(
+    holding_trade_days: int | None,
+    pnl_pct: float,
+    price: float,
+    confirm: float,
+) -> bool:
+    if holding_trade_days is None or holding_trade_days < 3:
+        return False
+    if confirm <= 0:
+        return False
+    confirm_gap = price / confirm - 1
+    return pnl_pct < 0.01 and confirm_gap <= 0.012
+
+
+def holding_age_text(holding_trade_days: int | None) -> str:
+    if holding_trade_days is None:
+        return "未记录入场交易日"
+    return f"持仓第{holding_trade_days}个交易日"
+
+
+def calc_holding_trade_days(
+    entry_date: date | None,
+    review_date: date | None,
+    trading_dates: Iterable[date | None] = (),
+) -> int | None:
+    if entry_date is None or review_date is None or entry_date > review_date:
+        return None
+    calendar = {
+        item
+        for item in trading_dates
+        if item is not None and entry_date <= item <= review_date and is_weekday(item)
+    }
+    if is_weekday(entry_date):
+        calendar.add(entry_date)
+    if is_weekday(review_date):
+        calendar.add(review_date)
+    if calendar:
+        return len(calendar)
+    return count_weekdays(entry_date, review_date)
+
+
+def count_weekdays(start: date, end: date) -> int:
+    total = 0
+    current = start
+    while current <= end:
+        if is_weekday(current):
+            total += 1
+        current += timedelta(days=1)
+    return total
+
+
+def is_weekday(value: date) -> bool:
+    return value.weekday() < 5
+
+
+def parse_position_date(value: date | datetime | str | None) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            pass
+    raise ValueError(f"unsupported position date: {value}")
 
 
 def build_buy_plan(

@@ -18,6 +18,8 @@ def render_three_day_trade_plan(plan: ThreeDayTradePlan) -> str:
     if not plan.holding_plans:
         lines.append("- 当前无持仓。")
     for item in plan.holding_plans:
+        entry_text = item.entry_date or "-"
+        holding_days_text = "-" if item.holding_trade_days is None else f"第{item.holding_trade_days}个交易日"
         lines.extend(
             [
                 (
@@ -26,6 +28,7 @@ def render_three_day_trade_plan(plan: ThreeDayTradePlan) -> str:
                     f"盈亏 {item.pnl:+.2f} ({item.pnl_pct:+.2%})"
                 ),
                 f"  确认 {item.confirm:.2f} | 止损 {item.stop:.2f} | 目标 {item.target:.2f}",
+                f"  入场 {entry_text} | 持仓 {holding_days_text}",
                 f"  触发: {item.trigger}",
             ]
         )
