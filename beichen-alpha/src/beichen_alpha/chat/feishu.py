@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import struct
 import sys
 import urllib.request
 from base64 import b64decode
@@ -220,7 +221,7 @@ def decrypt_feishu_payload(encrypted: str, encrypt_key: str) -> dict[str, Any]:
                 cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
                 decryptor = cipher.decryptor()
                 padded = decryptor.update(body) + decryptor.finalize()
-                return json.loads(pkcs7_unpad(padded).decode("utf-8"))
+                return parse_decrypted_feishu_json(pkcs7_unpad(padded))
             except Exception as exc:
                 errors.append(f"{type(exc).__name__}: {exc}")
     raise ValueError("; ".join(errors[-4:]))
@@ -235,6 +236,24 @@ def decode_base64(value: str) -> bytes:
         from base64 import urlsafe_b64decode
 
         return urlsafe_b64decode(normalized)
+
+
+def parse_decrypted_feishu_json(value: bytes) -> dict[str, Any]:
+    variants = [value]
+    if len(value) > 16:
+        variants.append(value[16:])
+    if len(value) >= 20:
+        message_len = struct.unpack(">I", value[16:20])[0]
+        if 0 < message_len <= len(value) - 20:
+            variants.append(value[20 : 20 + message_len])
+
+    errors: list[str] = []
+    for item in variants:
+        try:
+            return json.loads(item.decode("utf-8"))
+        except Exception as exc:
+            errors.append(f"{type(exc).__name__}: {exc}")
+    raise ValueError("; ".join(errors))
 
 
 def pkcs7_unpad(value: bytes) -> bytes:

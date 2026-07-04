@@ -7,6 +7,7 @@ from pathlib import Path
 
 from beichen_alpha.data import load_price_csv
 from beichen_alpha.chat import ChatMessage, FeishuEventAdapter, handle_chat_message
+from beichen_alpha.chat.feishu import parse_decrypted_feishu_json
 from beichen_alpha.content_sources.manual_text import ManualTextSource
 from beichen_alpha.content_sources.wechat_article import parse_wechat_html
 from beichen_alpha.decision_log import (
@@ -1720,6 +1721,12 @@ class ChatAdapterTest(unittest.TestCase):
 
         self.assertEqual(result.status_code, 400)
         self.assertIn("error", result.payload)
+
+    def test_parse_decrypted_feishu_json_with_random_prefix(self):
+        body = json.dumps({"challenge": "abc"}, ensure_ascii=False).encode("utf-8")
+        payload = b"0123456789abcdef" + struct.pack(">I", len(body)) + body + b"app-id"
+
+        self.assertEqual(parse_decrypted_feishu_json(payload), {"challenge": "abc"})
 
     def test_feishu_event_adapter_replies_to_text_message(self):
         sent: list[str] = []
