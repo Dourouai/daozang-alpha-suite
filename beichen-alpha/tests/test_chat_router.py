@@ -29,6 +29,8 @@ class ChatRouterLlmTest(unittest.TestCase):
 
         self.assertEqual(response.intent, "fallback")
         self.assertIn("自定义对话还没有启用大模型", response.text)
+        self.assertNotIn("config/local.env", response.text)
+        self.assertNotIn("BEICHEN_LLM_API_KEY", response.text)
 
 
 class FeishuDedupeTest(unittest.TestCase):

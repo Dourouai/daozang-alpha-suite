@@ -128,7 +128,6 @@ def render_custom_chat(
                 [
                     "自定义对话还没有启用大模型。",
                     "我现在能看：状态、持仓、最新计划、决策日志；发送「帮助」可以看完整命令。",
-                    "要让自然语言分析生效，请在服务器 config/local.env 配置 BEICHEN_CHAT_LLM_ENABLED=true、BEICHEN_LLM_API_KEY、BEICHEN_LLM_MODEL，然后重启 beichen-alpha-chat。",
                 ]
             ),
             "fallback",
