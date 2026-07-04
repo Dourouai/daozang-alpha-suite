@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
+import sys
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -34,12 +37,23 @@ class ChatResponse:
 
 
 QuoteLoader = Callable[[list[str]], dict[str, RealtimeQuote]]
+RecommendationJobLauncher = Callable[["RecommendationJob"], None]
+
+
+@dataclass(frozen=True)
+class RecommendationJob:
+    job_id: str
+    query: str
+    sector: str
+    command: list[str]
+    log_path: Path
 
 
 def handle_chat_message(
     message: ChatMessage,
     project_dir: str | Path = ".",
     quote_loader: QuoteLoader | None = None,
+    recommendation_launcher: RecommendationJobLauncher | None = None,
 ) -> ChatResponse:
     root = Path(project_dir)
     text = normalize_text(message.text)
@@ -50,7 +64,10 @@ def handle_chat_message(
     if has_any(text, ("持仓", "仓位", "position")):
         return ChatResponse(render_positions(root, quote_loader=quote_loader), "positions")
     if is_recommendation_request(text):
-        return ChatResponse(render_recommendation_request(text, root, quote_loader=quote_loader), "recommendation")
+        return ChatResponse(
+            start_fresh_recommendation_job(text, root, launcher=recommendation_launcher),
+            "recommendation_job",
+        )
     if has_any(text, ("计划", "候选", "买入", "trade", "plan")):
         return ChatResponse(render_latest_trade_plan(root), "trade_plan")
     if has_any(text, ("日志", "复盘", "记录", "decision", "log")):
@@ -85,7 +102,8 @@ def render_help() -> str:
             "可用命令：",
             "- 状态：检查运行目录、持仓、候选池、决策日志",
             "- 持仓：查看本地持仓，并现场拉取行情",
-            "- 推荐 医疗行业的3支股票：从可追溯候选中筛选，并现场拉取行情",
+            "- 推荐3支股票：后台刷新新闻、政策、公告、风险和行情后推送结果",
+            "- 推荐 医疗行业的3支股票：后台刷新医药主题候选并推送结果",
             "- 计划：查看最近一次 3 日交易计划",
             "- 日志：查看决策日志数量和最近记录",
             "",
@@ -154,6 +172,111 @@ def render_positions(root: Path, quote_loader: QuoteLoader | None = None) -> str
 
 def is_recommendation_request(text: str) -> bool:
     return "推荐" in text and has_any(text, ("股票", "支", "只", "买", "候选", "行业", "板块"))
+
+
+def start_fresh_recommendation_job(
+    text: str,
+    root: Path,
+    launcher: RecommendationJobLauncher | None = None,
+) -> str:
+    now = datetime.now()
+    count = parse_requested_count(text, default=3)
+    sector_label, keywords = parse_sector_keywords(text)
+    job_id = make_run_id("fresh_recommendation", now, {"query": text, "sector": sector_label})
+    command = build_fresh_recommendation_command(text, count, sector_label, keywords)
+    log_path = root / "logs" / f"{job_id}.log"
+    job = RecommendationJob(
+        job_id=job_id,
+        query=text,
+        sector=sector_label,
+        command=command,
+        log_path=log_path,
+    )
+    record_recommendation_job(root, job, now)
+    (launcher or launch_recommendation_job)(job)
+    return "\n".join(
+        [
+            "收到，已启动最新推荐任务。",
+            f"- 任务: {job_id}",
+            f"- 范围: {sector_label}",
+            f"- 数量: {count}",
+            "- 数据: K线、实时行情、新闻、政策页、宏观RSS、公告风险、风险日历、行业轮动",
+            "- 结果会通过北辰 webhook 推送；不构成投资建议。",
+        ]
+    )
+
+
+def build_fresh_recommendation_command(
+    text: str,
+    count: int,
+    sector_label: str,
+    keywords: tuple[str, ...],
+) -> list[str]:
+    del text
+    watchlist = resolve_recommendation_watchlist(sector_label, keywords)
+    title = f"道藏 最新{sector_label}候选"
+    command = [
+        sys.executable,
+        "-m",
+        "beichen_alpha",
+        "--source",
+        os.environ.get("BEICHEN_CHAT_RECOMMEND_SOURCE", "baostock"),
+        "--watchlist",
+        watchlist,
+        "--limit",
+        str(count),
+        "--realtime",
+        "--notify",
+        "feishu",
+        "--notify-style",
+        "text",
+        "--notify-title",
+        title,
+        "--quiet",
+    ]
+    if sector_label == "医疗/医药":
+        command.extend(["--allow-small-caps", "--min-market-cap", "0"])
+    return command
+
+
+def resolve_recommendation_watchlist(sector_label: str, keywords: tuple[str, ...]) -> str:
+    if sector_label == "医疗/医药" or any(keyword in {"医疗", "医药", "创新药"} for keyword in keywords):
+        return os.environ.get("BEICHEN_CHAT_MEDICAL_WATCHLIST", "data/watchlists/innovation_drug_pool.txt")
+    return os.environ.get("BEICHEN_CHAT_BROAD_WATCHLIST", "data/watchlists/broad_target_pool_2026-07-03.txt")
+
+
+def record_recommendation_job(root: Path, job: RecommendationJob, created_at: datetime) -> None:
+    path = root / "data/runtime/chat_recommendation_jobs.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "job_id": job.job_id,
+        "kind": "fresh_recommendation",
+        "created_at": created_at.isoformat(timespec="seconds"),
+        "query": job.query,
+        "sector": job.sector,
+        "command": job.command,
+        "log_path": str(job.log_path),
+        "status": "started",
+    }
+    with path.open("a", encoding="utf-8") as file:
+        file.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def launch_recommendation_job(job: RecommendationJob) -> None:
+    job.log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_file = job.log_path.open("a", encoding="utf-8")
+    try:
+        log_file.write(f"[{datetime.now().isoformat(timespec='seconds')}] start {job.job_id}\n")
+        log_file.flush()
+        subprocess.Popen(
+            job.command,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            cwd=job.log_path.parents[1],
+            start_new_session=True,
+        )
+    finally:
+        log_file.close()
 
 
 def render_recommendation_request(text: str, root: Path, quote_loader: QuoteLoader | None = None) -> str:

@@ -1701,32 +1701,27 @@ class ChatAdapterTest(unittest.TestCase):
         self.assertIn("现价 37.10", response.text)
         self.assertIn("止损 35.28", response.text)
 
-    def test_chat_router_recommendation_uses_realtime_and_logs(self):
+    def test_chat_router_recommendation_starts_fresh_job(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            source_records = [
-                make_chat_candidate_record("000963", "华东医药", 92, "条件执行", 30.30, 27.51, 31.51),
-                make_chat_candidate_record("300347", "泰格医药", 111, "观察", 48.35, 44.96, 50.28),
-                make_chat_candidate_record("600196", "复星医药", 87, "观察", 23.63, 21.90, 24.58),
-            ]
-            append_decision_records(source_records, root / "data/decision_logs/recommendations.jsonl")
+            launched = []
 
             response = handle_chat_message(
                 ChatMessage("推荐 医疗行业的3支股票"),
                 project_dir=root,
-                quote_loader=lambda symbols: {
-                    "000963": RealtimeQuote("000963", "华东医药", 30.45, 30.10, 30.60, 29.90, 30.05, 1.33, quote_time=datetime(2026, 7, 3, 10, 31)),
-                    "300347": RealtimeQuote("300347", "泰格医药", 47.20, 46.80, 47.50, 46.50, 46.93, 0.58, quote_time=datetime(2026, 7, 3, 10, 31)),
-                    "600196": RealtimeQuote("600196", "复星医药", 23.10, 23.00, 23.20, 22.90, 23.29, -0.82, quote_time=datetime(2026, 7, 3, 10, 31)),
-                },
+                recommendation_launcher=launched.append,
             )
 
-            records = read_decision_records(root / "data/decision_logs/recommendations.jsonl")
+            job_log = root / "data/runtime/chat_recommendation_jobs.jsonl"
+            job_log_exists = job_log.exists()
 
-        self.assertEqual(response.intent, "recommendation")
-        self.assertIn("医疗/医药 3日短线候选", response.text)
-        self.assertIn("现价 30.45", response.text)
-        self.assertEqual(len([item for item in records if item.get("decision_kind") == "chat_recommendation"]), 3)
+        self.assertEqual(response.intent, "recommendation_job")
+        self.assertIn("已启动最新推荐任务", response.text)
+        self.assertEqual(len(launched), 1)
+        self.assertIn("data/watchlists/innovation_drug_pool.txt", launched[0].command)
+        self.assertIn("--notify", launched[0].command)
+        self.assertIn("--realtime", launched[0].command)
+        self.assertTrue(job_log_exists)
 
     def test_healthcheck_summarizes_position_count(self):
         with tempfile.TemporaryDirectory() as tmpdir:
