@@ -1,7 +1,9 @@
 #!/bin/zsh
 set -euo pipefail
 
-cd /Users/yancy/Documents/vibe-project/daozang-alpha-suite/beichen-alpha
+SCRIPT_DIR="${0:A:h}"
+PROJECT_DIR="${SCRIPT_DIR:h}"
+cd "$PROJECT_DIR"
 
 if [ -f "config/local.env" ]; then
   set -a

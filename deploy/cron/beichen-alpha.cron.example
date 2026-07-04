@@ -1,0 +1,4 @@
+# Example cron entry. Adjust the absolute path after cloning on the server.
+# The server timezone should be Asia/Shanghai, or keep CRON_TZ here.
+CRON_TZ=Asia/Shanghai
+20 9 * * 1-5 cd /opt/daozang-alpha-suite/beichen-alpha && ./scripts/server_daily_run.sh >> logs/server_daily_run.out.log 2>> logs/server_daily_run.err.log

@@ -159,6 +159,28 @@ PYTHONPATH=src python3 -m beichen_alpha --profile config/profile_overrides.csv
 PYTHONPATH=src python3 -m unittest discover -s tests
 ```
 
+## 服务器预备
+
+服务器部署不是自动交易，只用于定时研究、飞书提醒、决策日志和模型数据刷新。
+
+本项目已经提供两个服务器入口：
+
+```bash
+./scripts/server_healthcheck.sh
+./scripts/server_daily_run.sh
+```
+
+`server_healthcheck.sh` 会检查持仓文件、候选池、日志目录、运行目录、飞书 webhook 和道藏模型分数是否就绪。
+
+`server_daily_run.sh` 默认只运行健康检查和 3 日交易计划；可以通过 `config/local.env` 打开更重的任务：
+
+```bash
+export RUN_POOL_REFRESH="true"
+export RUN_FOCUS_CHECK="true"
+```
+
+完整部署步骤见 monorepo 根目录的 [`docs/deployment.md`](../docs/deployment.md)。
+
 ## 飞书推送
 
 复制或编辑本地密钥文件：

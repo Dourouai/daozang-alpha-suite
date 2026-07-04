@@ -22,3 +22,15 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 cd ../daozang-alpha
 PYTHONPATH=src python3 -m unittest discover -s tests
 ```
+
+## Deployment
+
+Server preparation notes live in [`docs/deployment.md`](docs/deployment.md).
+
+The short version:
+
+- clone this monorepo to a stable path such as `/opt/daozang-alpha-suite`
+- create `beichen-alpha/config/local.env` from the example
+- create local-only `beichen-alpha/data/positions/current_positions.json`
+- run `beichen-alpha/scripts/server_healthcheck.sh`
+- schedule `beichen-alpha/scripts/server_daily_run.sh` with systemd or cron

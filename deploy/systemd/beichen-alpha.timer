@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Beichen Alpha on A-share trading mornings
+
+[Timer]
+OnCalendar=Mon..Fri 09:20
+Persistent=true
+Unit=beichen-alpha.service
+
+[Install]
+WantedBy=timers.target
+

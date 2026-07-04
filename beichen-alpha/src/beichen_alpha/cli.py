@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -70,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
         return sync_global_features_main(argv[1:])
     if argv and argv[0] == "trade-plan":
         return trade_plan_main(argv[1:])
+    if argv and argv[0] == "healthcheck":
+        return healthcheck_main(argv[1:])
 
     parser = argparse.ArgumentParser(description="Beichen Alpha candidate pool runner")
     parser.add_argument("--source", choices=["akshare", "baostock", "csv"], default="akshare", help="data source")
@@ -479,6 +483,66 @@ def sync_global_features_main(argv: list[str]) -> int:
     if failures:
         print("source warnings: " + "；".join(failures))
     return 0
+
+
+def healthcheck_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="Check Beichen Alpha runtime readiness")
+    parser.add_argument("--positions", default="data/positions/current_positions.json", help="current positions JSON path")
+    parser.add_argument("--watchlist", default="data/watchlists/broad_target_pool_2026-07-03.txt", help="candidate watchlist path")
+    parser.add_argument("--model-scores", default="../daozang-alpha/data/exports/alpha_scores_latest.csv", help="Daozang score CSV")
+    parser.add_argument("--decision-log", default=str(DEFAULT_DECISION_LOG_PATH), help="local JSONL decision log path")
+    parser.add_argument("--runtime-dir", default="data/runtime", help="runtime state directory")
+    parser.add_argument("--log-dir", default="logs", help="script log directory")
+    parser.add_argument("--require-feishu", action="store_true", help="fail when FEISHU_WEBHOOK is missing")
+    parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    args = parser.parse_args(argv)
+
+    checks: list[dict] = []
+    add_check(checks, "python", True, f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}", "error")
+    add_check(checks, "working_directory", Path("pyproject.toml").exists(), str(Path.cwd()), "error")
+    add_check(checks, "positions", Path(args.positions).exists(), args.positions, "error")
+    add_check(checks, "watchlist", Path(args.watchlist).exists(), args.watchlist, "error")
+    add_check(checks, "model_scores", Path(args.model_scores).exists(), args.model_scores, "warning")
+    add_writable_dir_check(checks, Path(args.decision_log).parent, "decision_log_dir")
+    add_writable_dir_check(checks, Path(args.runtime_dir), "runtime_dir")
+    add_writable_dir_check(checks, Path(args.log_dir), "log_dir")
+
+    webhook = os.environ.get("FEISHU_WEBHOOK", "")
+    feishu_ok = bool(webhook and "replace-me" not in webhook)
+    add_check(
+        checks,
+        "feishu_webhook",
+        feishu_ok or not args.require_feishu,
+        "configured" if feishu_ok else "missing",
+        "error" if args.require_feishu else "warning",
+    )
+
+    payload = {
+        "ok": not any(not item["ok"] and item["level"] == "error" for item in checks),
+        "checks": checks,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        for item in checks:
+            marker = "OK" if item["ok"] else item["level"].upper()
+            print(f"[{marker}] {item['name']}: {item['detail']}")
+    return 0 if payload["ok"] else 1
+
+
+def add_check(checks: list[dict], name: str, ok: bool, detail: str, level: str) -> None:
+    checks.append({"name": name, "ok": ok, "detail": detail, "level": level})
+
+
+def add_writable_dir_check(checks: list[dict], path: Path, name: str) -> None:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".write_test"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        add_check(checks, name, True, str(path), "error")
+    except OSError as exc:
+        add_check(checks, name, False, f"{path}: {exc}", "error")
 
 
 def trade_plan_main(argv: list[str]) -> int:

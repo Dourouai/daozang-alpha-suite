@@ -1,0 +1,11 @@
+[Unit]
+Description=Beichen Alpha daily trading assistant run
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/daozang-alpha-suite/beichen-alpha
+ExecStart=/opt/daozang-alpha-suite/beichen-alpha/scripts/server_daily_run.sh
+Nice=5
+
