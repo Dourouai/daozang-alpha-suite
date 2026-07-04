@@ -30,6 +30,10 @@ git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "origin/$BRANCH"
 git pull --ff-only origin "$BRANCH"
 
 cd "$APP_DIR/beichen-alpha"
+if [ -x ".venv/bin/python" ] && ! .venv/bin/python -m pip --version >/dev/null 2>&1; then
+  rm -rf .venv
+fi
+
 if [ ! -x ".venv/bin/python" ]; then
   "$PYTHON_BIN" -m venv .venv
 fi
@@ -51,6 +55,9 @@ fi
 
 if [ "$INSTALL_DAOZANG_RESEARCH" = "true" ]; then
   cd "$APP_DIR/daozang-alpha"
+  if [ -x ".venv/bin/python" ] && ! .venv/bin/python -m pip --version >/dev/null 2>&1; then
+    rm -rf .venv
+  fi
   if [ ! -x ".venv/bin/python" ]; then
     "$PYTHON_BIN" -m venv .venv
   fi
