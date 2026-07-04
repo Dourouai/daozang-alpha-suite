@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from beichen_alpha.data import load_price_csv
+from beichen_alpha.chat import ChatMessage, FeishuEventAdapter, handle_chat_message
 from beichen_alpha.content_sources.manual_text import ManualTextSource
 from beichen_alpha.content_sources.wechat_article import parse_wechat_html
 from beichen_alpha.decision_log import (
@@ -1647,6 +1648,91 @@ class DecisionLogTest(unittest.TestCase):
         self.assertEqual(buy["code"], "600028")
         self.assertEqual(buy["scores"]["model_pct_rank"], 0.61)
         self.assertEqual(buy["portfolio"]["available_cash"], plan.available_cash)
+
+
+class ChatAdapterTest(unittest.TestCase):
+    def test_chat_router_reads_positions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            positions_dir = root / "data/positions"
+            positions_dir.mkdir(parents=True)
+            (positions_dir / "current_positions.json").write_text(
+                json.dumps(
+                    {
+                        "positions": [
+                            {
+                                "code": "600036",
+                                "name": "招商银行",
+                                "shares": 100,
+                                "cost": 36.89,
+                                "confirm": 36.80,
+                                "invalid": 35.28,
+                                "target": 39.23,
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            response = handle_chat_message(ChatMessage("持仓"), project_dir=root)
+
+        self.assertEqual(response.intent, "positions")
+        self.assertIn("招商银行", response.text)
+        self.assertIn("止损 35.28", response.text)
+
+    def test_chat_router_summarizes_latest_trade_plan(self):
+        recommendation = make_recommendation("000963", "华东医药", 30.05, 92, "条件执行")
+        plan = build_three_day_trade_plan([recommendation], [], capital=10000, top_n=1)
+        records = build_trade_plan_decision_records(
+            plan,
+            as_of=datetime(2026, 7, 3, 23, 59, 59),
+            context={"command": "trade_plan"},
+            logged_at=datetime(2026, 7, 4, 18, 0, 0),
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            append_decision_records(records, root / "data/decision_logs/recommendations.jsonl")
+            response = handle_chat_message(ChatMessage("最新计划"), project_dir=root)
+
+        self.assertEqual(response.intent, "trade_plan")
+        self.assertIn("华东医药", response.text)
+        self.assertIn("确认", response.text)
+
+    def test_feishu_event_adapter_handles_challenge(self):
+        adapter = FeishuEventAdapter(webhook_sender=lambda text: {"code": 0})
+        result = adapter.handle_event({"challenge": "abc"})
+
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.payload, {"challenge": "abc"})
+
+    def test_feishu_event_adapter_replies_to_text_message(self):
+        sent: list[str] = []
+        adapter = FeishuEventAdapter(
+            verify_token="token",
+            webhook_sender=lambda text: sent.append(text) or {"code": 0},
+        )
+        result = adapter.handle_event(
+            {
+                "header": {"token": "token"},
+                "event": {
+                    "sender": {"sender_id": {"open_id": "ou_test"}},
+                    "message": {
+                        "message_id": "om_test",
+                        "chat_id": "oc_test",
+                        "message_type": "text",
+                        "content": json.dumps({"text": "帮助"}, ensure_ascii=False),
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.response.intent, "help")
+        self.assertEqual(len(sent), 1)
+        self.assertIn("可用命令", sent[0])
 
 
 def self_price_map():

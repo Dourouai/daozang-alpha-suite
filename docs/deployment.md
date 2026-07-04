@@ -33,6 +33,11 @@ Edit `config/local.env`:
 ```bash
 export FEISHU_WEBHOOK="https://open.feishu.cn/open-apis/bot/v2/hook/..."
 export FEISHU_SECRET=""
+export FEISHU_APP_ID=""
+export FEISHU_APP_SECRET=""
+export FEISHU_EVENT_VERIFY_TOKEN=""
+export FEISHU_CHAT_HOST="127.0.0.1"
+export FEISHU_CHAT_PORT="8787"
 export RUN_HEALTHCHECK="true"
 export RUN_POOL_REFRESH="false"
 export RUN_TRADE_PLAN="true"
@@ -78,6 +83,28 @@ Run one scheduled cycle:
 ./scripts/server_daily_run.sh
 ```
 
+## Feishu Chat Adapter
+
+The Beichen webhook is still the single notification channel. Daozang does not keep a separate Feishu webhook; it exports model artifacts for Beichen to consume.
+
+Custom Feishu webhooks are one-way. For true chat, create a Feishu app, enable event subscription plus message reply permissions, and expose this endpoint:
+
+```bash
+cd /opt/daozang-alpha-suite/beichen-alpha
+./scripts/beichen_chat_server.sh
+```
+
+Runtime endpoints:
+
+- `GET /health`
+- `POST /feishu/events`
+
+In production, place this behind HTTPS, then configure the Feishu app event callback URL as:
+
+```text
+https://your-domain.example/feishu/events
+```
+
 ## Scheduling
 
 Systemd example:
@@ -119,4 +146,5 @@ These are intentionally ignored by Git:
 
 - BaoStock, Tencent, AKShare, yfinance, and FRED can fail due network conditions. Treat failed runs as data-health events, not trading signals.
 - Keep Feishu notifications as research alerts only.
+- Keep Feishu replies as assistant output only; they are not order instructions.
 - Keep decision logs private; they contain personal holdings and decision context.

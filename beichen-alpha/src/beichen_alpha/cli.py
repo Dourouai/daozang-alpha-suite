@@ -74,6 +74,8 @@ def main(argv: list[str] | None = None) -> int:
         return trade_plan_main(argv[1:])
     if argv and argv[0] == "healthcheck":
         return healthcheck_main(argv[1:])
+    if argv and argv[0] == "chat-server":
+        return chat_server_main(argv[1:])
 
     parser = argparse.ArgumentParser(description="Beichen Alpha candidate pool runner")
     parser.add_argument("--source", choices=["akshare", "baostock", "csv"], default="akshare", help="data source")
@@ -528,6 +530,18 @@ def healthcheck_main(argv: list[str]) -> int:
             marker = "OK" if item["ok"] else item["level"].upper()
             print(f"[{marker}] {item['name']}: {item['detail']}")
     return 0 if payload["ok"] else 1
+
+
+def chat_server_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="Run the Beichen Alpha Feishu chat adapter server")
+    parser.add_argument("--host", default=os.environ.get("FEISHU_CHAT_HOST", "127.0.0.1"), help="bind host")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("FEISHU_CHAT_PORT", "8787")), help="bind port")
+    args = parser.parse_args(argv)
+
+    from .chat_server import run_chat_server
+
+    run_chat_server(args.host, args.port, project_dir=Path.cwd())
+    return 0
 
 
 def add_check(checks: list[dict], name: str, ok: bool, detail: str, level: str) -> None:

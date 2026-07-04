@@ -168,6 +168,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 ```bash
 ./scripts/server_healthcheck.sh
 ./scripts/server_daily_run.sh
+./scripts/beichen_chat_server.sh
 ```
 
 `server_healthcheck.sh` 会检查持仓文件、候选池、日志目录、运行目录、飞书 webhook 和道藏模型分数是否就绪。
@@ -229,6 +230,39 @@ export FEISHU_SECRET=""
 ```bash
 PYTHONPATH=src python3 -m beichen_alpha --notify feishu --notify-style text
 ```
+
+## 飞书对话适配层
+
+自定义机器人 webhook 只能单向推送，不能接收用户消息。要让北辰在飞书里“可对话”，需要创建飞书应用，开启事件订阅和消息回复权限，然后把事件回调地址指向北辰服务：
+
+```bash
+./scripts/beichen_chat_server.sh
+```
+
+本地服务入口：
+
+- `GET /health`：健康检查。
+- `POST /feishu/events`：飞书应用事件回调。
+
+本地环境变量仍然放在 `config/local.env`：
+
+```bash
+export FEISHU_APP_ID=""
+export FEISHU_APP_SECRET=""
+export FEISHU_EVENT_VERIFY_TOKEN=""
+export FEISHU_CHAT_HOST="127.0.0.1"
+export FEISHU_CHAT_PORT="8787"
+```
+
+第一版支持的对话命令：
+
+- `帮助`：查看命令菜单。
+- `状态`：检查本地运行状态。
+- `持仓`：查看本地持仓摘要。
+- `计划`：查看最近一次 3 日交易计划。
+- `日志`：查看决策日志摘要。
+
+道藏 Alpha 不再维护独立飞书 webhook。道藏只输出模型分数和研究报告，后续由北辰读取并通过同一个飞书入口推送或回复。
 
 ## 投喂博主观点
 
