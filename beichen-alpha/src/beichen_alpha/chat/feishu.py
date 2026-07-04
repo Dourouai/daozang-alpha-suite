@@ -204,11 +204,37 @@ def decrypt_feishu_payload(encrypted: str, encrypt_key: str) -> dict[str, Any]:
     except ModuleNotFoundError as exc:
         raise RuntimeError("cryptography is required for encrypted daocang callbacks") from exc
 
-    key = sha256(encrypt_key.encode("utf-8")).digest()
-    cipher = Cipher(algorithms.AES(key), modes.CBC(key[:16]))
-    decryptor = cipher.decryptor()
-    padded = decryptor.update(b64decode(encrypted)) + decryptor.finalize()
-    return json.loads(pkcs7_unpad(padded).decode("utf-8"))
+    decoded = decode_base64(encrypted)
+    keys = [sha256(encrypt_key.encode("utf-8")).digest()]
+    raw_key = encrypt_key.encode("utf-8")
+    if len(raw_key) in {16, 24, 32}:
+        keys.append(raw_key)
+
+    errors: list[str] = []
+    for key in keys:
+        candidates = [(key[:16], decoded)]
+        if len(decoded) > 16:
+            candidates.append((decoded[:16], decoded[16:]))
+        for iv, body in candidates:
+            try:
+                cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+                decryptor = cipher.decryptor()
+                padded = decryptor.update(body) + decryptor.finalize()
+                return json.loads(pkcs7_unpad(padded).decode("utf-8"))
+            except Exception as exc:
+                errors.append(f"{type(exc).__name__}: {exc}")
+    raise ValueError("; ".join(errors[-4:]))
+
+
+def decode_base64(value: str) -> bytes:
+    normalized = value.strip()
+    normalized += "=" * (-len(normalized) % 4)
+    try:
+        return b64decode(normalized)
+    except Exception:
+        from base64 import urlsafe_b64decode
+
+        return urlsafe_b64decode(normalized)
 
 
 def pkcs7_unpad(value: bytes) -> bytes:
