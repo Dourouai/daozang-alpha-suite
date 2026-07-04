@@ -1639,6 +1639,38 @@ class ThreeDayTradePlanTest(unittest.TestCase):
         self.assertEqual(plan.holding_plans[0].action, "资金效率观察")
         self.assertIn("释放资金", plan.holding_plans[0].trigger)
 
+    def test_holding_near_cost_and_confirm_uses_capital_efficiency_watch(self):
+        positions = [
+            {
+                "code": "600025",
+                "name": "华能水电",
+                "shares": 100,
+                "cost": 9.24,
+                "confirm": 9.17,
+                "invalid": 8.79,
+                "target": 9.78,
+            }
+        ]
+        recommendation = Recommendation(
+            code="600025",
+            name="华能水电",
+            score=98,
+            status="条件执行",
+            close=9.19,
+            observation_zone="9.10-9.25",
+            confirm_price=9.17,
+            invalid_price=8.79,
+            reason="测试",
+            risk="-",
+            candidate_score=98,
+            take_profit_price=9.78,
+        )
+
+        plan = build_three_day_trade_plan([recommendation], positions, capital=10000, top_n=0)
+
+        self.assertEqual(plan.holding_plans[0].action, "资金效率观察")
+        self.assertIn("轮动到更强候选", plan.holding_plans[0].trigger)
+
 
 class DecisionLogTest(unittest.TestCase):
     def test_recommendation_decision_records_roundtrip(self):

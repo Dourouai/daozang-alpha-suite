@@ -134,7 +134,7 @@ def build_holding_plan(position: dict[str, Any], recommendation: Recommendation 
     elif price >= target:
         action = "止盈优先"
         trigger = f"到达目标价 {target:.2f} 附近，分批止盈或上移保护线。"
-    elif has_low_capital_efficiency(recommendation, pnl_pct):
+    elif has_low_capital_efficiency(recommendation, pnl_pct, price, confirm):
         action = "资金效率观察"
         trigger = (
             f"仍在确认价 {confirm:.2f} 上方，但近期短线弹性不足且仍在成本附近；"
@@ -160,12 +160,22 @@ def build_holding_plan(position: dict[str, Any], recommendation: Recommendation 
     )
 
 
-def has_low_capital_efficiency(recommendation: Recommendation | None, pnl_pct: float) -> bool:
+def has_low_capital_efficiency(
+    recommendation: Recommendation | None,
+    pnl_pct: float,
+    price: float,
+    confirm: float,
+) -> bool:
     if recommendation is None:
         return False
-    if "短线弹性" not in recommendation.risk:
+    if abs(pnl_pct) > 0.015:
         return False
-    return abs(pnl_pct) <= 0.015
+    if "短线弹性" in recommendation.risk:
+        return True
+    if confirm <= 0:
+        return False
+    confirm_gap = price / confirm - 1
+    return price >= confirm and confirm_gap <= 0.006
 
 
 def build_buy_plan(
