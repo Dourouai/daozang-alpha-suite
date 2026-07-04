@@ -5,6 +5,8 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -38,6 +40,7 @@ class ChatResponse:
 
 QuoteLoader = Callable[[list[str]], dict[str, RealtimeQuote]]
 RecommendationJobLauncher = Callable[["RecommendationJob"], None]
+LlmResponder = Callable[[str, Path], str]
 
 
 @dataclass(frozen=True)
@@ -54,6 +57,7 @@ def handle_chat_message(
     project_dir: str | Path = ".",
     quote_loader: QuoteLoader | None = None,
     recommendation_launcher: RecommendationJobLauncher | None = None,
+    llm_responder: LlmResponder | None = None,
 ) -> ChatResponse:
     root = Path(project_dir)
     text = normalize_text(message.text)
@@ -72,10 +76,8 @@ def handle_chat_message(
         return ChatResponse(render_latest_trade_plan(root), "trade_plan")
     if has_any(text, ("日志", "复盘", "记录", "decision", "log")):
         return ChatResponse(render_decision_log_summary(root), "decision_log")
-    return ChatResponse(
-        "我现在能看：状态、持仓、最新计划、决策日志。\n发送「帮助」可以看完整命令。",
-        "fallback",
-    )
+    llm_text, llm_intent = render_custom_chat(text, root, llm_responder=llm_responder)
+    return ChatResponse(llm_text, llm_intent)
 
 
 def normalize_text(text: str) -> str:
@@ -106,10 +108,142 @@ def render_help() -> str:
             "- 推荐 医疗行业的3支股票：后台刷新医药主题候选并推送结果",
             "- 计划：查看最近一次 3 日交易计划",
             "- 日志：查看决策日志数量和最近记录",
+            "- 自然语言：启用 LLM 后，可解释持仓、计划和短线纪律",
             "",
             "说明：当前只做研究提醒，不自动下单，不构成投资建议；持仓股数/成本来自本地文件，不等于券商实时账户。",
         ]
     )
+
+
+def render_custom_chat(
+    text: str,
+    root: Path,
+    llm_responder: LlmResponder | None = None,
+) -> tuple[str, str]:
+    if llm_responder is not None:
+        return llm_responder(text, root), "llm_chat"
+    if not is_llm_chat_enabled():
+        return (
+            "\n".join(
+                [
+                    "自定义对话还没有启用大模型。",
+                    "我现在能看：状态、持仓、最新计划、决策日志；发送「帮助」可以看完整命令。",
+                    "要让自然语言分析生效，请在服务器 config/local.env 配置 BEICHEN_CHAT_LLM_ENABLED=true、BEICHEN_LLM_API_KEY、BEICHEN_LLM_MODEL，然后重启 beichen-alpha-chat。",
+                ]
+            ),
+            "fallback",
+        )
+    try:
+        return call_llm_chat(text, root), "llm_chat"
+    except Exception as exc:
+        return (
+            "\n".join(
+                [
+                    "自定义对话已启用，但本次大模型调用失败。",
+                    f"错误: {type(exc).__name__}: {exc}",
+                    "固定命令仍可用：持仓、计划、日志、推荐3支股票。",
+                ]
+            ),
+            "llm_error",
+        )
+
+
+def is_llm_chat_enabled() -> bool:
+    flag = os.environ.get("BEICHEN_CHAT_LLM_ENABLED", "").strip().lower()
+    if flag not in {"1", "true", "yes", "on"}:
+        return False
+    return bool(llm_api_key())
+
+
+def llm_api_key() -> str:
+    return os.environ.get("BEICHEN_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
+
+
+def call_llm_chat(text: str, root: Path) -> str:
+    base_url = (
+        os.environ.get("BEICHEN_LLM_BASE_URL")
+        or os.environ.get("OPENAI_BASE_URL")
+        or "https://api.openai.com/v1"
+    ).rstrip("/")
+    model = os.environ.get("BEICHEN_LLM_MODEL", "gpt-4.1-mini")
+    timeout = float(os.environ.get("BEICHEN_LLM_TIMEOUT", "20"))
+    max_tokens = int(os.environ.get("BEICHEN_LLM_MAX_TOKENS", "700"))
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": llm_system_prompt()},
+            {"role": "user", "content": build_llm_user_prompt(text, root)},
+        ],
+        "temperature": 0.2,
+        "max_tokens": max_tokens,
+    }
+    request = urllib.request.Request(
+        f"{base_url}/chat/completions",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {llm_api_key()}",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"LLM HTTP {exc.code}: {detail[:500]}") from exc
+    result = json.loads(raw)
+    choices = result.get("choices") or []
+    if not choices:
+        raise RuntimeError(f"LLM returned no choices: {raw[:500]}")
+    content = choices[0].get("message", {}).get("content")
+    if not content:
+        raise RuntimeError(f"LLM returned empty content: {raw[:500]}")
+    return str(content).strip()
+
+
+def llm_system_prompt() -> str:
+    return (
+        "你是 daocang / 北辰 Alpha 的A股短线研究助手。"
+        "你只能基于用户问题和提供的本地上下文回答；不要编造实时新闻、政策或行情。"
+        "如果用户要最新选股、新闻或政策分析，提醒其发送“推荐3支股票”或具体行业推荐来启动刷新任务。"
+        "回答要短、可执行、带风险边界；始终说明仅用于个人研究和策略测试，不构成投资建议。"
+    )
+
+
+def build_llm_user_prompt(text: str, root: Path) -> str:
+    context = "\n\n".join(
+        [
+            render_status(root),
+            render_positions_snapshot(root),
+            render_latest_trade_plan(root),
+            render_decision_log_summary(root),
+        ]
+    )
+    return f"用户问题：{text}\n\n本地上下文：\n{context}"
+
+
+def render_positions_snapshot(root: Path) -> str:
+    path = root / "data/positions/current_positions.json"
+    if not path.exists():
+        return "当前持仓：未找到持仓文件。"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return f"当前持仓：持仓文件解析失败 {exc}"
+    positions = payload.get("positions") or []
+    if not positions:
+        return "当前持仓：空。"
+    lines = ["当前持仓快照"]
+    for item in positions:
+        lines.append(
+            (
+                f"- {item.get('name') or item.get('code')} {item.get('code')}: "
+                f"{item.get('shares')}股, 成本{item.get('cost')}, 入场{item.get('entry_date') or '-'}, "
+                f"确认{item.get('confirm')}, 止损{item.get('invalid')}, 目标{item.get('target')}"
+            )
+        )
+    return "\n".join(lines)
 
 
 def render_status(root: Path) -> str:

@@ -14,7 +14,11 @@ if [ -f "config/local.env" ]; then
   set +a
 fi
 
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+DEFAULT_PYTHON_BIN="python3"
+if [ -x ".venv/bin/python" ]; then
+  DEFAULT_PYTHON_BIN=".venv/bin/python"
+fi
+PYTHON_BIN="${PYTHON_BIN:-$DEFAULT_PYTHON_BIN}"
 
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "$PYTHON_BIN" -m beichen_alpha chat-server \
   --host "${FEISHU_CHAT_HOST:-127.0.0.1}" \

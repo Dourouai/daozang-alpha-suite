@@ -136,6 +136,17 @@ export FEISHU_EVENT_VERIFY_TOKEN="..."
 export FEISHU_ENCRYPT_KEY="..."
 ```
 
+Optional LLM fallback for natural-language chat:
+
+```bash
+export BEICHEN_CHAT_LLM_ENABLED="true"
+export BEICHEN_LLM_API_KEY="..."
+export BEICHEN_LLM_MODEL="gpt-4.1-mini"
+export BEICHEN_LLM_BASE_URL="https://api.openai.com/v1"
+```
+
+When this is disabled or the key is missing, daocang still supports deterministic commands such as `持仓`, `计划`, `日志`, and `推荐3支股票`, but open-ended questions will return a configuration prompt.
+
 In production, place this behind HTTPS, then configure the Feishu app event callback URL as:
 
 ```text

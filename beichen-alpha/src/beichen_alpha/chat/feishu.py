@@ -158,6 +158,15 @@ class FeishuEventAdapter:
                 },
             )
             return FeishuEventResult(200, {"code": 0, "msg": "ignored"})
+        if self.is_duplicate_message(message):
+            self.log_event(
+                "feishu_chat_message_duplicate",
+                {
+                    "has_message_id": bool(message.message_id),
+                    "has_chat_id": bool(message.chat_id),
+                },
+            )
+            return FeishuEventResult(200, {"code": 0, "msg": "duplicate_ignored"})
         response = handle_chat_message(message, self.project_dir)
         self.log_event(
             "feishu_chat_message_received",
@@ -243,6 +252,37 @@ class FeishuEventAdapter:
         if self.allow_webhook_fallback:
             return self.webhook_sender(text)
         raise RuntimeError("FEISHU_APP_ID and FEISHU_APP_SECRET are required for daocang chat replies")
+
+    def is_duplicate_message(self, message: ChatMessage) -> bool:
+        if not message.message_id:
+            return False
+        path = self.project_dir / "data/runtime/feishu_message_dedupe.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        seen = set()
+        if path.exists():
+            lines = path.read_text(encoding="utf-8").splitlines()[-500:]
+            for line in lines:
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                seen.add(str(payload.get("message_id") or ""))
+        if message.message_id in seen:
+            return True
+        with path.open("a", encoding="utf-8") as file:
+            file.write(
+                json.dumps(
+                    {
+                        "message_id": message.message_id,
+                        "chat_id": message.chat_id,
+                        "user_id": message.user_id,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+        return False
 
 
 def parse_message_content(raw: Any) -> dict[str, Any]:
