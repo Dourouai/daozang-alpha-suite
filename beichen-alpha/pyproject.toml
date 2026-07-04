@@ -8,6 +8,7 @@ dependencies = []
 [project.optional-dependencies]
 data = ["akshare", "baostock", "easyquotation", "efinance", "pandas", "yfinance"]
 content = ["beautifulsoup4"]
+server = ["cryptography>=42"]
 ui = ["streamlit"]
 
 [project.scripts]

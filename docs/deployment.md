@@ -58,6 +58,7 @@ export FEISHU_SECRET=""
 export FEISHU_APP_ID=""
 export FEISHU_APP_SECRET=""
 export FEISHU_EVENT_VERIFY_TOKEN=""
+export FEISHU_ENCRYPT_KEY=""
 export FEISHU_CHAT_HOST="127.0.0.1"
 export FEISHU_CHAT_PORT="8787"
 export FEISHU_CHAT_ALLOW_WEBHOOK_FALLBACK="false"
@@ -126,6 +127,13 @@ Runtime endpoints:
 
 - `GET /health`
 - `POST /feishu/events`
+
+If the Feishu app encryption strategy is enabled, copy both values from Feishu Open Platform into server-local `beichen-alpha/config/local.env`:
+
+```bash
+export FEISHU_EVENT_VERIFY_TOKEN="..."
+export FEISHU_ENCRYPT_KEY="..."
+```
 
 In production, place this behind HTTPS, then configure the Feishu app event callback URL as:
 

@@ -35,7 +35,7 @@ if [ ! -x ".venv/bin/python" ]; then
 fi
 
 .venv/bin/python -m pip install -U pip
-.venv/bin/python -m pip install -e ".[data,content]"
+.venv/bin/python -m pip install -e ".[data,content,server]"
 
 mkdir -p data/positions data/decision_logs data/runtime logs
 

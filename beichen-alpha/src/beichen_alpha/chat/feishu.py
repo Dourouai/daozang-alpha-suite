@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
+from base64 import b64decode
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable
 
@@ -81,12 +83,14 @@ class FeishuEventAdapter:
         self,
         project_dir: str | Path = ".",
         verify_token: str | None = None,
+        encrypt_key: str | None = None,
         api_client: FeishuOpenApiClient | None = None,
         webhook_sender: Callable[[str], dict[str, Any]] | None = None,
         allow_webhook_fallback: bool | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.verify_token = verify_token if verify_token is not None else os.environ.get("FEISHU_EVENT_VERIFY_TOKEN", "")
+        self.encrypt_key = encrypt_key if encrypt_key is not None else os.environ.get("FEISHU_ENCRYPT_KEY", "")
         self.api_client = api_client or FeishuOpenApiClient()
         self.webhook_sender = webhook_sender or send_text
         self.allow_webhook_fallback = (
@@ -96,6 +100,16 @@ class FeishuEventAdapter:
         )
 
     def handle_event(self, payload: dict[str, Any]) -> FeishuEventResult:
+        try:
+            payload = self.decrypt_payload_if_needed(payload)
+        except Exception as exc:
+            return FeishuEventResult(
+                400,
+                {
+                    "error": "invalid encrypted feishu payload",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                },
+            )
         if "challenge" in payload:
             return FeishuEventResult(200, {"challenge": payload["challenge"]})
         if not self.verify_payload(payload):
@@ -121,6 +135,14 @@ class FeishuEventAdapter:
         header = payload.get("header") or {}
         token = payload.get("token") or header.get("token") or ""
         return token == self.verify_token
+
+    def decrypt_payload_if_needed(self, payload: dict[str, Any]) -> dict[str, Any]:
+        encrypted = payload.get("encrypt")
+        if not encrypted:
+            return payload
+        if not self.encrypt_key:
+            raise RuntimeError("FEISHU_ENCRYPT_KEY is required for encrypted daocang callbacks")
+        return decrypt_feishu_payload(str(encrypted), self.encrypt_key)
 
     def extract_message(self, payload: dict[str, Any]) -> ChatMessage | None:
         event = payload.get("event") or {}
@@ -159,3 +181,27 @@ def parse_message_content(raw: Any) -> dict[str, Any]:
         return json.loads(str(raw))
     except json.JSONDecodeError:
         return {"text": str(raw)}
+
+
+def decrypt_feishu_payload(encrypted: str, encrypt_key: str) -> dict[str, Any]:
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("cryptography is required for encrypted daocang callbacks") from exc
+
+    key = sha256(encrypt_key.encode("utf-8")).digest()
+    cipher = Cipher(algorithms.AES(key), modes.CBC(key[:16]))
+    decryptor = cipher.decryptor()
+    padded = decryptor.update(b64decode(encrypted)) + decryptor.finalize()
+    return json.loads(pkcs7_unpad(padded).decode("utf-8"))
+
+
+def pkcs7_unpad(value: bytes) -> bytes:
+    if not value:
+        raise ValueError("empty decrypted payload")
+    pad_len = value[-1]
+    if pad_len < 1 or pad_len > 16:
+        raise ValueError("invalid padding")
+    if value[-pad_len:] != bytes([pad_len]) * pad_len:
+        raise ValueError("invalid padding bytes")
+    return value[:-pad_len]

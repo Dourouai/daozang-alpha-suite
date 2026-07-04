@@ -1714,6 +1714,13 @@ class ChatAdapterTest(unittest.TestCase):
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.payload, {"challenge": "abc"})
 
+    def test_feishu_event_adapter_returns_json_for_encrypted_payload_errors(self):
+        adapter = FeishuEventAdapter(webhook_sender=lambda text: {"code": 0})
+        result = adapter.handle_event({"encrypt": "not-a-valid-payload"})
+
+        self.assertEqual(result.status_code, 400)
+        self.assertIn("error", result.payload)
+
     def test_feishu_event_adapter_replies_to_text_message(self):
         sent: list[str] = []
         adapter = FeishuEventAdapter(
