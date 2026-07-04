@@ -83,11 +83,17 @@ class FeishuEventAdapter:
         verify_token: str | None = None,
         api_client: FeishuOpenApiClient | None = None,
         webhook_sender: Callable[[str], dict[str, Any]] | None = None,
+        allow_webhook_fallback: bool | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.verify_token = verify_token if verify_token is not None else os.environ.get("FEISHU_EVENT_VERIFY_TOKEN", "")
         self.api_client = api_client or FeishuOpenApiClient()
         self.webhook_sender = webhook_sender or send_text
+        self.allow_webhook_fallback = (
+            allow_webhook_fallback
+            if allow_webhook_fallback is not None
+            else os.environ.get("FEISHU_CHAT_ALLOW_WEBHOOK_FALLBACK", "").lower() == "true"
+        )
 
     def handle_event(self, payload: dict[str, Any]) -> FeishuEventResult:
         if "challenge" in payload:
@@ -138,7 +144,10 @@ class FeishuEventAdapter:
         if self.api_client.enabled() and message.message_id:
             self.api_client.reply_text(message.message_id, text)
             return
-        self.webhook_sender(text)
+        if self.allow_webhook_fallback:
+            self.webhook_sender(text)
+            return
+        raise RuntimeError("FEISHU_APP_ID and FEISHU_APP_SECRET are required for daocang chat replies")
 
 
 def parse_message_content(raw: Any) -> dict[str, Any]:

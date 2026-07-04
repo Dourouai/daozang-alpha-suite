@@ -1,0 +1,16 @@
+[Unit]
+Description=Beichen Alpha Feishu chat adapter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/daozang-alpha-suite/beichen-alpha
+Environment=PYTHON_BIN=/opt/daozang-alpha-suite/beichen-alpha/.venv/bin/python
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/daozang-alpha-suite/beichen-alpha/scripts/beichen_chat_server.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

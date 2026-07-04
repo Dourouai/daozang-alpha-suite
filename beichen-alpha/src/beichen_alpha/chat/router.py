@@ -45,6 +45,7 @@ def handle_chat_message(message: ChatMessage, project_dir: str | Path = ".") -> 
 def normalize_text(text: str) -> str:
     clean = re.sub(r"<at[^>]*>.*?</at>", "", text or "")
     clean = clean.replace("@北辰", "").replace("@道藏", "")
+    clean = re.sub(r"(?i)@?daocang", "", clean)
     return clean.strip()
 
 
@@ -60,7 +61,7 @@ def has_any(text: str, keywords: tuple[str, ...]) -> bool:
 def render_help() -> str:
     return "\n".join(
         [
-            "北辰 Alpha 对话助手",
+            "daocang 飞书助手",
             "",
             "可用命令：",
             "- 状态：检查运行目录、持仓、候选池、决策日志",
@@ -83,7 +84,7 @@ def render_status(root: Path) -> str:
         ("日志目录", root / "logs"),
         ("道藏模型分数", root / "../daozang-alpha/data/exports/alpha_scores_latest.csv"),
     ]
-    lines = ["北辰 Alpha 状态"]
+    lines = ["daocang / 北辰 Alpha 状态"]
     for label, path in checks:
         marker = "OK" if path.exists() else "缺失"
         lines.append(f"- {label}: {marker}")

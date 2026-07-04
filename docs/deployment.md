@@ -9,6 +9,28 @@ This repository is not an order-execution system. Server deployment is for sched
 - Enough disk for local market data and Qlib artifacts. Keep generated data outside Git.
 - Server timezone set to `Asia/Shanghai`.
 
+## Current Target
+
+- Server IP: `43.155.159.149`
+- Domain: `daozang.zaps.work`
+- Visible Feishu app/bot name: `daocang`
+- Feishu event callback URL: `https://daozang.zaps.work/feishu/events`
+
+Create an A record for `daozang.zaps.work` pointing to `43.155.159.149`, then enable HTTPS in Baota before configuring the Feishu event callback.
+
+## Runtime Choice
+
+Default for Phase 1: do not use Docker.
+
+Use:
+
+- Python virtualenv for Beichen runtime dependencies.
+- systemd for the long-running daocang chat adapter.
+- systemd timer for daily research runs.
+- Baota/Nginx for HTTPS and reverse proxy.
+
+This keeps the first deployment easy to inspect on the Baota server. Docker Compose can be added later if Qlib/LightGBM dependencies become hard to reproduce, or if the service needs to move between servers.
+
 ## Clone
 
 ```bash
@@ -38,6 +60,7 @@ export FEISHU_APP_SECRET=""
 export FEISHU_EVENT_VERIFY_TOKEN=""
 export FEISHU_CHAT_HOST="127.0.0.1"
 export FEISHU_CHAT_PORT="8787"
+export FEISHU_CHAT_ALLOW_WEBHOOK_FALLBACK="false"
 export RUN_HEALTHCHECK="true"
 export RUN_POOL_REFRESH="false"
 export RUN_TRADE_PLAN="true"
@@ -85,9 +108,14 @@ Run one scheduled cycle:
 
 ## Feishu Chat Adapter
 
-The Beichen webhook is still the single notification channel. Daozang does not keep a separate Feishu webhook; it exports model artifacts for Beichen to consume.
+Feishu has two roles:
 
-Custom Feishu webhooks are one-way. For true chat, create a Feishu app, enable event subscription plus message reply permissions, and expose this endpoint:
+- Beichen custom webhook: one-way cards and alerts.
+- `daocang` Feishu app bot: two-way group chat through event subscription and message reply API.
+
+Daozang does not keep a separate Feishu webhook; it exports model artifacts for Beichen and daocang to consume.
+
+Custom Feishu webhooks are one-way. For true chat, create a `daocang` Feishu app, enable event subscription plus message reply permissions, add the app bot to the Feishu group, and expose this endpoint:
 
 ```bash
 cd /opt/daozang-alpha-suite/beichen-alpha
@@ -102,8 +130,45 @@ Runtime endpoints:
 In production, place this behind HTTPS, then configure the Feishu app event callback URL as:
 
 ```text
-https://your-domain.example/feishu/events
+https://daozang.zaps.work/feishu/events
 ```
+
+## Baota Reverse Proxy
+
+In Baota, create a site for `daozang.zaps.work`, enable SSL, then add the Nginx location snippet from:
+
+```text
+deploy/nginx/daozang.zaps.work.locations.conf
+```
+
+After DNS and SSL are ready, test:
+
+```bash
+curl -fsS https://daozang.zaps.work/health
+```
+
+Expected response:
+
+```json
+{"ok": true}
+```
+
+## GitHub Auto Deploy
+
+The workflow lives at:
+
+```text
+.github/workflows/deploy.yml
+```
+
+Add these GitHub repository secrets:
+
+- `DAOZANG_DEPLOY_HOST`: `43.155.159.149`
+- `DAOZANG_DEPLOY_USER`: SSH user, usually `root` on a Baota server
+- `DAOZANG_DEPLOY_PORT`: SSH port, usually `22`
+- `DAOZANG_DEPLOY_SSH_KEY`: private key allowed to SSH into the server
+
+On each push to `main`, GitHub Actions will SSH into the server, update `/opt/daozang-alpha-suite`, install Beichen dependencies, install systemd units, and restart the `beichen-alpha-chat` service.
 
 ## Scheduling
 
@@ -112,8 +177,10 @@ Systemd example:
 ```bash
 sudo cp /opt/daozang-alpha-suite/deploy/systemd/beichen-alpha.service /etc/systemd/system/
 sudo cp /opt/daozang-alpha-suite/deploy/systemd/beichen-alpha.timer /etc/systemd/system/
+sudo cp /opt/daozang-alpha-suite/deploy/systemd/beichen-alpha-chat.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now beichen-alpha.timer
+sudo systemctl enable --now beichen-alpha-chat.service
 systemctl list-timers beichen-alpha.timer
 ```
 

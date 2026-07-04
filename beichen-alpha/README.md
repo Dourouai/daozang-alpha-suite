@@ -190,7 +190,7 @@ export RUN_FOCUS_CHECK="true"
 cp config/local.env.example config/local.env
 ```
 
-在 `config/local.env` 中填入自定义机器人的 webhook：
+在 `config/local.env` 中填入北辰自定义机器人的 webhook。北辰只负责单向推送卡片和提醒：
 
 ```bash
 export FEISHU_WEBHOOK="https://open.feishu.cn/open-apis/bot/v2/hook/..."
@@ -233,7 +233,7 @@ PYTHONPATH=src python3 -m beichen_alpha --notify feishu --notify-style text
 
 ## 飞书对话适配层
 
-自定义机器人 webhook 只能单向推送，不能接收用户消息。要让北辰在飞书里“可对话”，需要创建飞书应用，开启事件订阅和消息回复权限，然后把事件回调地址指向北辰服务：
+北辰是自定义 webhook 机器人，只能单向推送，不能接收用户消息。要让飞书里的 `daocang` 机器人可对话，需要在飞书开放平台创建 `daocang` 应用，开启事件订阅和消息回复权限，把应用机器人加入飞书群，然后把事件回调地址指向北辰服务：
 
 ```bash
 ./scripts/beichen_chat_server.sh
@@ -252,6 +252,7 @@ export FEISHU_APP_SECRET=""
 export FEISHU_EVENT_VERIFY_TOKEN=""
 export FEISHU_CHAT_HOST="127.0.0.1"
 export FEISHU_CHAT_PORT="8787"
+export FEISHU_CHAT_ALLOW_WEBHOOK_FALLBACK="false"
 ```
 
 第一版支持的对话命令：
@@ -262,7 +263,7 @@ export FEISHU_CHAT_PORT="8787"
 - `计划`：查看最近一次 3 日交易计划。
 - `日志`：查看决策日志摘要。
 
-道藏 Alpha 不再维护独立飞书 webhook。道藏只输出模型分数和研究报告，后续由北辰读取并通过同一个飞书入口推送或回复。
+道藏 Alpha 不再维护独立飞书 webhook。道藏只输出模型分数和研究报告；北辰 webhook 负责主动推送，`daocang` 应用机器人负责群内对话。
 
 ## 投喂博主观点
 

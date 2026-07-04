@@ -1682,6 +1682,12 @@ class ChatAdapterTest(unittest.TestCase):
         self.assertIn("招商银行", response.text)
         self.assertIn("止损 35.28", response.text)
 
+    def test_chat_router_strips_daocang_mention(self):
+        response = handle_chat_message(ChatMessage("@daocang 帮助"))
+
+        self.assertEqual(response.intent, "help")
+        self.assertIn("daocang 飞书助手", response.text)
+
     def test_chat_router_summarizes_latest_trade_plan(self):
         recommendation = make_recommendation("000963", "华东医药", 30.05, 92, "条件执行")
         plan = build_three_day_trade_plan([recommendation], [], capital=10000, top_n=1)
@@ -1713,6 +1719,7 @@ class ChatAdapterTest(unittest.TestCase):
         adapter = FeishuEventAdapter(
             verify_token="token",
             webhook_sender=lambda text: sent.append(text) or {"code": 0},
+            allow_webhook_fallback=True,
         )
         result = adapter.handle_event(
             {

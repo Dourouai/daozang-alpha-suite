@@ -1,0 +1,56 @@
+name: Deploy daocang Bot
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-daocang-bot
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.DAOZANG_DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DAOZANG_DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DAOZANG_DEPLOY_PORT || '22' }}
+      DEPLOY_SSH_KEY: ${{ secrets.DAOZANG_DEPLOY_SSH_KEY }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check required secrets
+        run: |
+          test -n "$DEPLOY_HOST" || (echo "Missing DAOZANG_DEPLOY_HOST" >&2; exit 1)
+          test -n "$DEPLOY_USER" || (echo "Missing DAOZANG_DEPLOY_USER" >&2; exit 1)
+          test -n "$DEPLOY_SSH_KEY" || (echo "Missing DAOZANG_DEPLOY_SSH_KEY" >&2; exit 1)
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/daozang_deploy_key
+          chmod 600 ~/.ssh/daozang_deploy_key
+          ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy over SSH
+        run: |
+          ssh -i ~/.ssh/daozang_deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          export APP_DIR="/opt/daozang-alpha-suite"
+          export BRANCH="main"
+          export REPO_URL="https://github.com/Dourouai/daozang-alpha-suite.git"
+
+          if [ ! -d "$APP_DIR/.git" ]; then
+            mkdir -p "$(dirname "$APP_DIR")"
+            git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
+          fi
+
+          cd "$APP_DIR"
+          git fetch origin "$BRANCH"
+          git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "origin/$BRANCH"
+          git pull --ff-only origin "$BRANCH"
+          bash deploy/scripts/deploy_beichen_server.sh
+          REMOTE
