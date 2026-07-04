@@ -1898,7 +1898,7 @@ class ThreeDayTradePlanTest(unittest.TestCase):
             capital=10000,
             top_n=0,
             review_date=datetime(2026, 7, 7),
-            trading_dates=["2026-07-03", "2026-07-06", "2026-07-07"],
+            trading_dates=["2026-07-03"],
         )
 
         self.assertEqual(plan.holding_plans[0].action, "时间止损优先")

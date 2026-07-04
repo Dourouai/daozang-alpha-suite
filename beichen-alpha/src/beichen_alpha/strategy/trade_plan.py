@@ -238,11 +238,19 @@ def calc_holding_trade_days(
 ) -> int | None:
     if entry_date is None or review_date is None or entry_date > review_date:
         return None
-    calendar = {
+    known_calendar = {
         item
         for item in trading_dates
         if item is not None and entry_date <= item <= review_date and is_weekday(item)
     }
+    calendar = set(known_calendar)
+    if known_calendar:
+        last_known = max(known_calendar)
+        current = last_known + timedelta(days=1)
+        while current <= review_date:
+            if is_weekday(current):
+                calendar.add(current)
+            current += timedelta(days=1)
     if is_weekday(entry_date):
         calendar.add(entry_date)
     if is_weekday(review_date):
