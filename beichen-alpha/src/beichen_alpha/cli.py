@@ -490,6 +490,12 @@ def sync_global_features_main(argv: list[str]) -> int:
 def healthcheck_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Check Beichen Alpha runtime readiness")
     parser.add_argument("--positions", default="data/positions/current_positions.json", help="current positions JSON path")
+    parser.add_argument(
+        "--min-positions",
+        type=int,
+        default=int(os.environ.get("BEICHEN_MIN_POSITIONS", "1")),
+        help="minimum expected local position count",
+    )
     parser.add_argument("--watchlist", default="data/watchlists/broad_target_pool_2026-07-03.txt", help="candidate watchlist path")
     parser.add_argument("--model-scores", default="../daozang-alpha/data/exports/alpha_scores_latest.csv", help="Daozang score CSV")
     parser.add_argument("--decision-log", default=str(DEFAULT_DECISION_LOG_PATH), help="local JSONL decision log path")
@@ -502,7 +508,11 @@ def healthcheck_main(argv: list[str]) -> int:
     checks: list[dict] = []
     add_check(checks, "python", True, f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}", "error")
     add_check(checks, "working_directory", Path("pyproject.toml").exists(), str(Path.cwd()), "error")
-    add_check(checks, "positions", Path(args.positions).exists(), args.positions, "error")
+    positions_path = Path(args.positions)
+    add_check(checks, "positions", positions_path.exists(), args.positions, "error")
+    if positions_path.exists():
+        count, detail = summarize_positions_file(positions_path)
+        add_check(checks, "positions_count", count >= args.min_positions, detail, "error")
     add_check(checks, "watchlist", Path(args.watchlist).exists(), args.watchlist, "error")
     add_check(checks, "model_scores", Path(args.model_scores).exists(), args.model_scores, "warning")
     add_writable_dir_check(checks, Path(args.decision_log).parent, "decision_log_dir")
@@ -530,6 +540,16 @@ def healthcheck_main(argv: list[str]) -> int:
             marker = "OK" if item["ok"] else item["level"].upper()
             print(f"[{marker}] {item['name']}: {item['detail']}")
     return 0 if payload["ok"] else 1
+
+
+def summarize_positions_file(path: Path) -> tuple[int, str]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        positions = payload.get("positions", [])
+    except Exception as exc:
+        return 0, f"invalid positions JSON ({type(exc).__name__}: {exc})"
+    codes = [str(item.get("code") or "-") for item in positions if isinstance(item, dict)]
+    return len(codes), f"{len(codes)} positions: {', '.join(codes) if codes else '-'}"
 
 
 def chat_server_main(argv: list[str]) -> int:

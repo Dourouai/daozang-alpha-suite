@@ -8,6 +8,7 @@ from pathlib import Path
 from beichen_alpha.data import load_price_csv
 from beichen_alpha.chat import ChatMessage, FeishuEventAdapter, handle_chat_message
 from beichen_alpha.chat.feishu import parse_decrypted_feishu_json
+from beichen_alpha.cli import summarize_positions_file
 from beichen_alpha.content_sources.manual_text import ManualTextSource
 from beichen_alpha.content_sources.wechat_article import parse_wechat_html
 from beichen_alpha.decision_log import (
@@ -1726,6 +1727,26 @@ class ChatAdapterTest(unittest.TestCase):
         self.assertIn("医疗/医药 3日短线候选", response.text)
         self.assertIn("现价 30.45", response.text)
         self.assertEqual(len([item for item in records if item.get("decision_kind") == "chat_recommendation"]), 3)
+
+    def test_healthcheck_summarizes_position_count(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "positions.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "positions": [
+                            {"code": "600036"},
+                            {"code": "600025"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            count, detail = summarize_positions_file(path)
+
+        self.assertEqual(count, 2)
+        self.assertIn("600025", detail)
 
     def test_chat_router_strips_daocang_mention(self):
         response = handle_chat_message(ChatMessage("@daocang 帮助"))

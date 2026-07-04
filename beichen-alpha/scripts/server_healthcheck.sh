@@ -20,4 +20,5 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "$PYTHON_BIN" -m beichen_alpha healthcheck \
   --require-feishu \
+  --min-positions "${BEICHEN_MIN_POSITIONS:-1}" \
   "$@"
