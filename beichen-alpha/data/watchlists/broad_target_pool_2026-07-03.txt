@@ -1,0 +1,57 @@
+# Beichen Alpha broad target pool
+# Created: 2026-07-03
+# Source: dynamic all-A universe screen
+# Rules: market cap >= 300B CNY, exclude 消费/品牌消费, horizon ultra_short_2_3d
+# Enabled: market regime, sector rotation, risk calendar, personal opinion source
+# Skipped in first pass: ordinary news, CNINFO disclosure source, realtime execution
+# Next step: run realtime + full risk refinement to reduce this pool to 10 focus names.
+600900 # 长江电力
+601166 # 兴业银行
+601088 # 中国神华
+601658 # 邮储银行
+600036 # 招商银行
+601857 # 中国石油
+600028 # 中国石化
+600941 # 中国移动
+601728 # 中国电信
+600030 # 中信证券
+002415 # 海康威视
+601319 # 中国人保
+600276 # 恒瑞医药
+300059 # 东方财富
+688235 # 百济神州
+600938 # 中国海油
+600000 # 浦发银行
+603993 # 洛阳钼业
+601398 # 工商银行
+601939 # 建设银行
+601318 # 中国平安
+601328 # 交通银行
+601998 # 中信银行
+603259 # 药明康德
+601988 # 中国银行
+300750 # 宁德时代
+601288 # 农业银行
+688795 # 摩尔线程-U
+688012 # 中微公司
+688008 # 澜起科技
+688347 # 华虹宏力
+002371 # 北方华创
+601869 # 长飞光纤
+688981 # 中芯国际
+688256 # 寒武纪
+688041 # 海光信息
+300502 # 新易盛
+603986 # 兆易创新
+002384 # 东山精密
+600183 # 生益科技
+601138 # 工业富联
+300476 # 胜宏科技
+688820 # 盛合晶微
+300308 # 中际旭创
+002475 # 立讯精密
+601628 # 中国人寿
+601899 # 紫金矿业
+601211 # 国泰海通
+002594 # 比亚迪
+000725 # 京东方Ａ

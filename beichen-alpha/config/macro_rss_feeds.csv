@@ -1,0 +1,11 @@
+# RSS feeds for automatic macro event detection.
+# RSS is used as a low/medium-confidence event hint. Numeric surprise data still needs a future calendar/source connector.
+enabled,name,url,source_type,lookback_days
+true,Fed Speeches,https://www.federalreserve.gov/feeds/speeches.xml,fed_speech,3
+true,Fed Monetary Policy Press,https://www.federalreserve.gov/feeds/press_monetary.xml,fed_policy,3
+true,BEA News Releases,https://apps.bea.gov/rss/rss.xml,inflation,3
+false,BLS Latest,https://www.bls.gov/feed/bls_latest.rss,employment,3
+false,BLS Employment Situation,https://www.bls.gov/feed/empsit.rss,employment,3
+false,BLS CPI,https://www.bls.gov/feed/cpi.rss,inflation,3
+false,Fed H15 Selected Interest Rates,https://www.federalreserve.gov/feeds/h15.xml,general_macro,3
+false,Fed H10 Foreign Exchange Rates,https://www.federalreserve.gov/feeds/h10.xml,general_macro,3

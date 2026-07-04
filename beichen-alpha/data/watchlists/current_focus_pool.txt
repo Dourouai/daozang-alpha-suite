@@ -1,0 +1,15 @@
+# Beichen Alpha focus pool
+# Created: 2026-07-03
+# Basis: adjusted balanced model after reducing defensive/energy style overweight.
+# Source: broad_target_pool_2026-07-03 + full risk refinement for top candidates.
+# Rule: Monday 2026-07-06 only execute after realtime price stands above confirm price with volume and sector sync.
+600900 # 长江电力 | 条件执行 | candidate 192 | confirm 27.23 | invalid 26.36
+600028 # 中国石化 | 条件执行 | candidate 171 | confirm 4.73 | invalid 4.43
+600036 # 招商银行 | 条件执行 | candidate 165 | confirm 37.06 | invalid 35.28
+601857 # 中国石油 | 条件执行 | candidate 164 | confirm 9.01 | invalid 8.59
+600938 # 中国海油 | 条件执行 | candidate 147 | confirm 27.82 | invalid 26.40
+601088 # 中国神华 | 观察 | candidate 175 | confirm 41.50 | invalid 38.73
+601658 # 邮储银行 | 观察 | candidate 174 | confirm 5.00 | invalid 4.89
+603993 # 洛阳钼业 | 工业金属观察 | candidate 162 | confirm 19.30 | invalid 17.20
+600111 # 北方稀土 | 工业金属观察 | candidate 161 | confirm 49.08 | invalid 46.80
+300750 # 宁德时代 | 观察 | candidate 151 | confirm 390.99 | invalid 370.00

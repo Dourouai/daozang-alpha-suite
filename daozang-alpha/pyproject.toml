@@ -1,0 +1,33 @@
+[project]
+name = "daozang-alpha"
+version = "0.1.0"
+description = "A Qlib-based A-share quant research and alpha scoring assistant"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+research = [
+  "pyqlib>=0.9.7,<0.10",
+  "lightgbm>=4",
+  "numpy>=1.24",
+  "pandas>=2",
+  "scikit-learn>=1.3",
+]
+dev = [
+  "ruff>=0.6",
+]
+
+[project.scripts]
+daozang-alpha = "daozang_alpha.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

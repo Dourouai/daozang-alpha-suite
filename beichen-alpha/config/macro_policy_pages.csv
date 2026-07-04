@@ -1,0 +1,6 @@
+# Official policy pages for automatic policy-event detection.
+# These pages are parsed as low/medium-confidence title signals, then mapped by the policy_event classifier.
+enabled,name,url,source_type,lookback_days
+true,财政部政策发布,https://www.mof.gov.cn/zhengwuxinxi/zhengcefabu/,policy,14
+true,国家发改委通知,https://www.ndrc.gov.cn/xxgk/zcfb/tz/,policy,14
+true,人民银行新闻,https://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html,policy,7

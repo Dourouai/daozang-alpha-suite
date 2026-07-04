@@ -1,0 +1,36 @@
+[qlib]
+provider_uri = "data/qlib/cn_data"
+region = "cn"
+market = "csi300"
+benchmark = "SH000300"
+
+[dataset]
+freq = "day"
+label_horizon_days = 5
+label_expression = "Ref($close, -5) / $close - 1"
+
+[segments.train]
+start = "2016-01-01"
+end = "2022-12-31"
+
+[segments.valid]
+start = "2023-01-01"
+end = "2023-12-31"
+
+[segments.test]
+start = "2024-01-01"
+end = "2026-06-30"
+
+[model]
+name = "lightgbm"
+feature_set = "Alpha158"
+num_boost_round = 200
+early_stopping_rounds = 20
+learning_rate = 0.05
+num_leaves = 64
+max_depth = 8
+
+[export]
+top_n = 50
+path = "data/exports"
+reports_path = "reports"

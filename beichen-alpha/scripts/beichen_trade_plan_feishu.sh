@@ -1,0 +1,27 @@
+#!/bin/zsh
+set -euo pipefail
+
+cd /Users/yancy/Documents/vibe-project/daozang-alpha-suite/beichen-alpha
+
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+
+mkdir -p logs
+
+if [ -f "config/local.env" ]; then
+  set -a
+  source "config/local.env"
+  set +a
+fi
+
+notify_args=()
+if [ -n "${FEISHU_WEBHOOK:-}" ]; then
+  notify_args=(--notify feishu)
+fi
+
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m beichen_alpha trade-plan \
+  --positions data/positions/current_positions.json \
+  --watchlist data/watchlists/broad_target_pool_2026-07-03.txt \
+  --model-scores ../daozang-alpha/data/exports/alpha_scores_latest.csv \
+  --capital 10000 \
+  --top 3 \
+  "${notify_args[@]}"

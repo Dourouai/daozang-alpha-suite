@@ -1,0 +1,20 @@
+[project]
+name = "beichen-alpha"
+version = "0.1.0"
+description = "A lightweight A-share signal assistant for personal research"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+data = ["akshare", "baostock", "easyquotation", "efinance", "pandas", "yfinance"]
+content = ["beautifulsoup4"]
+ui = ["streamlit"]
+
+[project.scripts]
+beichen-alpha = "beichen_alpha.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

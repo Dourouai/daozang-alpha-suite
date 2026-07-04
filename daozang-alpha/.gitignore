@@ -1,0 +1,17 @@
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.tmp/
+*.egg-info/
+
+config/local.env
+data/*
+!data/.gitkeep
+!data/exports/.gitkeep
+reports/*
+!reports/.gitkeep
+mlruns/
+*.log

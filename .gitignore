@@ -1,0 +1,34 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Other local projects that live next to the Alpha workspace.
+site-lead-email/
+slef-vpn/
+
+# Local secrets and personal/runtime state.
+beichen-alpha/config/local.env
+daozang-alpha/config/local.env
+beichen-alpha/data/positions/current_positions.json
+beichen-alpha/data/decision_logs/
+beichen-alpha/data/runtime/
+beichen-alpha/logs/
+
+# Generated or bulky datasets.
+beichen-alpha/data/cache/
+beichen-alpha/data/features/*.csv
+beichen-alpha/data/features/*.json
+beichen-alpha/data/*.jsonl
+daozang-alpha/.venv/
+daozang-alpha/.tmp/
+daozang-alpha/data/*
+!daozang-alpha/data/.gitkeep
+!daozang-alpha/data/exports/
+!daozang-alpha/data/exports/.gitkeep
+daozang-alpha/reports/*
+!daozang-alpha/reports/.gitkeep
+daozang-alpha/mlruns/
+*.log
