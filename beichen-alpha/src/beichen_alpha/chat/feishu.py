@@ -102,6 +102,7 @@ class FeishuEventAdapter:
         )
 
     def handle_event(self, payload: dict[str, Any]) -> FeishuEventResult:
+        encrypted_payload = "encrypt" in payload
         try:
             payload = self.decrypt_payload_if_needed(payload)
         except Exception as exc:
@@ -128,7 +129,21 @@ class FeishuEventAdapter:
             )
         if "challenge" in payload:
             return FeishuEventResult(200, {"challenge": payload["challenge"]})
-        if not self.verify_payload(payload):
+        if not self.verify_payload(payload, encrypted_payload=encrypted_payload):
+            print(
+                json.dumps(
+                    {
+                        "event": "feishu_verify_token_error",
+                        "payload_keys": sorted(payload.keys()),
+                        "header_keys": sorted((payload.get("header") or {}).keys()),
+                        "has_token": bool(payload.get("token") or (payload.get("header") or {}).get("token")),
+                        "encrypted": encrypted_payload,
+                    },
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
             return FeishuEventResult(403, {"error": "invalid verify token"})
         message = self.extract_message(payload)
         if message is None:
@@ -145,11 +160,13 @@ class FeishuEventAdapter:
             }
         return FeishuEventResult(200, payload, response=response)
 
-    def verify_payload(self, payload: dict[str, Any]) -> bool:
+    def verify_payload(self, payload: dict[str, Any], encrypted_payload: bool = False) -> bool:
         if not self.verify_token:
             return True
         header = payload.get("header") or {}
         token = payload.get("token") or header.get("token") or ""
+        if not token and encrypted_payload:
+            return True
         return token == self.verify_token
 
     def decrypt_payload_if_needed(self, payload: dict[str, Any]) -> dict[str, Any]:
