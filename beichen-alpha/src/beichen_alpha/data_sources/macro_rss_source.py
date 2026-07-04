@@ -398,7 +398,28 @@ def classify_policy_event(title: str, text: str, link: str, published_at: dateti
             "央行",
             "人民银行",
             "降准",
+            "逆回购",
+            "公开市场",
             "lpr",
+            "mlf",
+            "社融",
+            "社会融资",
+            "货币供应",
+            "m2",
+            "国务院",
+            "证监会",
+            "上交所",
+            "深交所",
+            "交易所",
+            "资本市场",
+            "上市公司",
+            "回购",
+            "增持",
+            "并购",
+            "重组",
+            "退市",
+            "融资融券",
+            "程序化交易",
             "policy",
             "regulation",
             "fiscal",
@@ -423,6 +444,46 @@ def classify_policy_event(title: str, text: str, link: str, published_at: dateti
             detail="政策源识别国内流动性支持",
             decay_days=3,
         )
+    if has_any(text, ("逆回购", "公开市场", "中期借贷便利", "mlf", "lpr", "贷款市场报价利率", "社融", "社会融资", "货币供应", "m2", "新增人民币贷款")):
+        rate_cut = has_any(text, ("下调", "下降", "降低")) and has_any(
+            text,
+            ("利率", "lpr", "贷款市场报价利率", "中标利率", "操作利率", "存款准备金率"),
+        )
+        credit_expansion = has_any(text, ("净投放", "流动性合理充裕", "增长", "多增", "扩张", "增加"))
+        if rate_cut or credit_expansion or has_any(text, ("降准",)):
+            return build_event(
+                title,
+                feed,
+                published_at,
+                link,
+                event_type="policy_event",
+                stance="china_liquidity_support",
+                positive=("非银金融", "银行", "半导体", "AI硬件", "材料", "数字经济"),
+                negative=("公用事业",),
+                base_score=7,
+                confidence=0.62,
+                detail="政策源识别人民银行流动性或信用支持",
+                decay_days=3,
+            )
+        credit_slowdown = has_any(text, ("下降", "降低")) and has_any(
+            text,
+            ("社融", "社会融资", "货币供应", "m2", "新增人民币贷款", "信贷", "贷款"),
+        )
+        if has_any(text, ("上调", "上升", "提高", "净回笼", "回笼", "少增", "收缩", "回落")) or credit_slowdown:
+            return build_event(
+                title,
+                feed,
+                published_at,
+                link,
+                event_type="policy_event",
+                stance="china_liquidity_tightening",
+                positive=("银行", "公用事业"),
+                negative=("非银金融", "半导体", "AI硬件", "材料"),
+                base_score=6,
+                confidence=0.58,
+                detail="政策源识别人民银行流动性或信用收敛",
+                decay_days=2,
+            )
     if has_any(text, ("减税", "降费", "退税", "税费优惠", "税收优惠", "优惠政策", "零关税", "关税减免", "财政贴息", "财政补贴", "专项债", "tax cut", "tax relief", "subsidy")):
         return build_event(
             title,
@@ -468,7 +529,28 @@ def classify_policy_event(title: str, text: str, link: str, published_at: dateti
             detail="政策源识别税费/征管趋严",
             decay_days=3,
         )
-    if has_any(text, ("资本市场", "活跃资本市场", "长期资金入市", "并购重组", "回购增持", "提高上市公司质量", "资本市场改革")):
+    if has_any(
+        text,
+        (
+            "资本市场",
+            "活跃资本市场",
+            "长期资金入市",
+            "中长期资金入市",
+            "并购重组",
+            "回购增持",
+            "股票回购",
+            "市值管理",
+            "现金分红",
+            "提质增效重回报",
+            "提高上市公司质量",
+            "资本市场改革",
+            "交易型开放式证券投资基金",
+            "etf",
+            "科创板",
+            "创业板",
+            "注册制",
+        ),
+    ):
         return build_event(
             title,
             feed,
@@ -544,7 +626,33 @@ def classify_policy_event(title: str, text: str, link: str, published_at: dateti
             detail="政策源识别产业政策支持",
             decay_days=5,
         )
-    if has_any(text, ("反垄断", "平台监管", "数据安全", "网络安全审查", "医药反腐", "集采", "价格治理", "专项整治", "antitrust", "regulatory crackdown")):
+    if has_any(
+        text,
+        (
+            "反垄断",
+            "平台监管",
+            "数据安全",
+            "网络安全审查",
+            "医药反腐",
+            "集采",
+            "价格治理",
+            "专项整治",
+            "从严监管",
+            "依法从严",
+            "退市",
+            "行政处罚",
+            "立案",
+            "违规",
+            "警示函",
+            "责令改正",
+            "融资融券收紧",
+            "转融通",
+            "程序化交易",
+            "量化交易监管",
+            "antitrust",
+            "regulatory crackdown",
+        ),
+    ):
         return build_event(
             title,
             feed,

@@ -20,6 +20,7 @@ from .data_sources import (
     GlobalFeatureSource,
     GlobalLinkageSource,
     MacroRssEventSource,
+    PBOCMacroIndicatorSource,
     PolicyPageEventSource,
     build_sector_signals_from_price_map,
     fetch_universe_rows_and_profiles,
@@ -131,6 +132,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--disable-policy-pages", action="store_true", help="disable official policy page event source")
     parser.add_argument("--macro-policy-pages", default="config/macro_policy_pages.csv", help="official policy page CSV path")
     parser.add_argument("--macro-policy-timeout", type=float, default=8.0, help="timeout for each policy page")
+    parser.add_argument("--disable-pboc-macro", action="store_true", help="disable PBOC liquidity and credit indicator source")
+    parser.add_argument("--pboc-macro-lookback-days", type=int, default=45, help="PBOC numeric macro event lookback window")
+    parser.add_argument("--pboc-open-market-timeout", type=float, default=8.0, help="timeout for PBOC open-market detail pages")
     parser.add_argument("--disable-sector-rotation", action="store_true", help="disable sector rotation factor")
     parser.add_argument("--sector-limit", type=int, default=40, help="max industry boards checked for rotation")
     parser.add_argument("--disable-opinions", action="store_true", help="disable personal opinion news source")
@@ -218,10 +222,18 @@ def main(argv: list[str] | None = None) -> int:
                 as_of=as_of,
                 timeout=args.macro_policy_timeout,
             ).load()
-            macro_events = csv_macro_events + rss_macro_events + policy_page_events
+            pboc_macro_events = [] if args.disable_pboc_macro else PBOCMacroIndicatorSource(
+                as_of=as_of,
+                lookback_days=args.pboc_macro_lookback_days,
+                open_market_timeout=args.pboc_open_market_timeout,
+            ).load()
+            macro_events = csv_macro_events + rss_macro_events + policy_page_events + pboc_macro_events
             log_step(
                 args,
-                f"宏观事件: CSV {len(csv_macro_events)} 个，RSS {len(rss_macro_events)} 个，政策页 {len(policy_page_events)} 个",
+                (
+                    f"宏观事件: CSV {len(csv_macro_events)} 个，RSS {len(rss_macro_events)} 个，"
+                    f"政策页 {len(policy_page_events)} 个，央行数值 {len(pboc_macro_events)} 个"
+                ),
             )
         if args.disable_market_regime or args.source == "csv":
             log_step(args, "已跳过市场温度源。")
@@ -587,6 +599,7 @@ def trade_plan_main(argv: list[str]) -> int:
     parser.add_argument("--benchmark", default="000300", help="benchmark index code")
     parser.add_argument("--start", default="20260601", help="start date for candidate bars")
     parser.add_argument("--end", default="20260703", help="end date for candidate bars")
+    parser.add_argument("--review-date", default="", help="holding review date, YYYYMMDD; default uses --end")
     parser.add_argument("--capital", type=float, default=10000.0, help="account capital for planning")
     parser.add_argument("--top", type=int, default=3, help="number of buy candidates")
     parser.add_argument("--max-trade-pct", type=float, default=0.35, help="single trade budget as capital fraction")
@@ -597,6 +610,7 @@ def trade_plan_main(argv: list[str]) -> int:
 
     try:
         as_of = parse_as_of(args.end)
+        review_as_of = parse_as_of(args.review_date) if args.review_date else as_of
         positions = load_positions(args.positions)
         symbols = dedupe([item["code"] for item in positions] + read_watchlist(args.watchlist))
         price_map = (
@@ -638,6 +652,8 @@ def trade_plan_main(argv: list[str]) -> int:
             top_n=args.top,
             max_trade_pct=args.max_trade_pct,
             model_scores=load_model_scores(args.model_scores),
+            review_date=review_as_of,
+            trading_dates=[bar.date for bar in price_map.get(args.benchmark, [])],
         )
     except Exception as exc:
         print(f"Error: trade-plan failed ({type(exc).__name__}): {exc}", file=sys.stderr)
@@ -693,6 +709,9 @@ def daily_refresh_pool_main(argv: list[str]) -> int:
     parser.add_argument("--disable-policy-pages", action="store_true", help="disable official policy page event source")
     parser.add_argument("--macro-policy-pages", default="config/macro_policy_pages.csv", help="official policy page CSV path")
     parser.add_argument("--macro-policy-timeout", type=float, default=8.0, help="timeout for each policy page")
+    parser.add_argument("--disable-pboc-macro", action="store_true", help="disable PBOC liquidity and credit indicator source")
+    parser.add_argument("--pboc-macro-lookback-days", type=int, default=45, help="PBOC numeric macro event lookback window")
+    parser.add_argument("--pboc-open-market-timeout", type=float, default=8.0, help="timeout for PBOC open-market detail pages")
     parser.add_argument("--include-news", action="store_true", help="include ordinary AKShare news; slower")
     parser.add_argument("--include-disclosures", action="store_true", help="include CNINFO disclosures; slower")
     parser.add_argument("--disable-opinions", action="store_true", help="disable personal opinion source")
@@ -764,10 +783,18 @@ def daily_refresh_pool_main(argv: list[str]) -> int:
                 as_of=as_of,
                 timeout=args.macro_policy_timeout,
             ).load()
-            macro_events = csv_macro_events + rss_macro_events + policy_page_events
+            pboc_macro_events = [] if args.disable_pboc_macro else PBOCMacroIndicatorSource(
+                as_of=as_of,
+                lookback_days=args.pboc_macro_lookback_days,
+                open_market_timeout=args.pboc_open_market_timeout,
+            ).load()
+            macro_events = csv_macro_events + rss_macro_events + policy_page_events + pboc_macro_events
             log_step(
                 args,
-                f"宏观事件: CSV {len(csv_macro_events)} 个，RSS {len(rss_macro_events)} 个，政策页 {len(policy_page_events)} 个",
+                (
+                    f"宏观事件: CSV {len(csv_macro_events)} 个，RSS {len(rss_macro_events)} 个，"
+                    f"政策页 {len(policy_page_events)} 个，央行数值 {len(pboc_macro_events)} 个"
+                ),
             )
 
         log_step(args, "加载市场温度和行业轮动...")
@@ -962,6 +989,7 @@ def trade_plan_context(args: argparse.Namespace, symbols: list[str]) -> dict:
         "symbols": symbols,
         "start": args.start,
         "end": args.end,
+        "review_date": args.review_date or args.end,
         "capital": args.capital,
         "top": args.top,
         "max_trade_pct": args.max_trade_pct,

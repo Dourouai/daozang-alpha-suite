@@ -4,3 +4,12 @@ enabled,name,url,source_type,lookback_days
 true,财政部政策发布,https://www.mof.gov.cn/zhengwuxinxi/zhengcefabu/,policy,14
 true,国家发改委通知,https://www.ndrc.gov.cn/xxgk/zcfb/tz/,policy,14
 true,人民银行新闻,https://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html,policy,7
+true,人民银行公开市场业务,https://www.pbc.gov.cn/zhengcehuobisi/125207/125213/125431/index.html,policy,7
+true,人民银行利率政策,https://www.pbc.gov.cn/zhengcehuobisi/125207/125213/125440/index.html,policy,45
+true,国务院最新政策,https://www.gov.cn/zhengce/zuixin/,policy,14
+true,国务院政策文件库,https://www.gov.cn/zhengce/zhengcewenjianku/index.htm,policy,30
+true,证监会要闻,https://www.csrc.gov.cn/csrc/c100028/common_list.shtml,policy,14
+true,证监会辖区监管动态,https://www.csrc.gov.cn/csrc/c100030/common_list.shtml,policy,14
+true,上交所热点动态,https://www.sse.com.cn/aboutus/mediacenter/hotandd/,policy,14
+true,深交所本所要闻,https://www.szse.cn/aboutus/trends/news/index.html,policy,14
+true,深交所通知公告,https://www.szse.cn/disclosure/notice/general/index.html,policy,14

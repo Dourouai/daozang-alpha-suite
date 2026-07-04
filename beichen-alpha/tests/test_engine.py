@@ -29,6 +29,14 @@ from beichen_alpha.data_sources.market_regime_source import build_market_regime
 from beichen_alpha.data_sources.macro_event_source import CsvMacroEventSource
 from beichen_alpha.data_sources.macro_rss_source import MacroRssFeed, parse_rss_events
 from beichen_alpha.data_sources.policy_page_source import PolicyPage, parse_policy_page_events, parse_policy_page_items
+from beichen_alpha.data_sources.pboc_macro_source import (
+    build_credit_growth_events,
+    build_lpr_events,
+    build_money_supply_events,
+    build_reserve_requirement_events,
+    build_social_financing_events,
+    parse_open_market_detail,
+)
 from beichen_alpha.data_sources.realtime_quote_source import parse_tencent_quote
 from beichen_alpha.data_sources.market_data_router import MarketDataRouter
 from beichen_alpha.data_sources.qlib_bin_source import QlibBinPriceSource, normalize_qlib_symbol
@@ -728,6 +736,180 @@ class MacroEventFactorTest(unittest.TestCase):
         self.assertEqual(items[0]["published_at"], datetime(2026, 7, 2))
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].stance, "industrial_policy_support")
+
+    def test_policy_page_source_classifies_capital_market_support(self):
+        xml = """
+        <rss><channel>
+          <item>
+            <title>证监会发布资本市场支持长期资金入市和并购重组政策</title>
+            <description>推动回购增持和提高上市公司质量。</description>
+            <link>https://example.com/csrc</link>
+            <pubDate>Thu, 02 Jul 2026 12:00:00 GMT</pubDate>
+          </item>
+        </channel></rss>
+        """
+        events = parse_rss_events(
+            xml,
+            MacroRssFeed("证监会要闻", "https://example.com/rss", "policy", lookback_days=3),
+            as_of=datetime(2026, 7, 3, 10),
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].stance, "capital_market_support")
+        self.assertIn("非银金融", events[0].positive_sectors)
+
+    def test_policy_page_source_classifies_exchange_regulatory_tightening(self):
+        xml = """
+        <rss><channel>
+          <item>
+            <title>深交所进一步规范程序化交易和退市监管安排</title>
+            <description>从严监管违规交易行为。</description>
+            <link>https://example.com/szse</link>
+            <pubDate>Thu, 02 Jul 2026 12:00:00 GMT</pubDate>
+          </item>
+        </channel></rss>
+        """
+        events = parse_rss_events(
+            xml,
+            MacroRssFeed("深交所通知公告", "https://example.com/rss", "policy", lookback_days=3),
+            as_of=datetime(2026, 7, 3, 10),
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].stance, "regulatory_tightening")
+        self.assertIn("公用事业", events[0].positive_sectors)
+
+    def test_policy_page_source_classifies_m2_slowdown_as_tightening(self):
+        xml = """
+        <rss><channel>
+          <item>
+            <title>人民银行发布6月货币供应量：M2同比增速下降</title>
+            <description>社融和新增人民币贷款同比少增。</description>
+            <link>https://example.com/pboc-m2</link>
+            <pubDate>Thu, 02 Jul 2026 12:00:00 GMT</pubDate>
+          </item>
+        </channel></rss>
+        """
+        events = parse_rss_events(
+            xml,
+            MacroRssFeed("人民银行新闻", "https://example.com/rss", "policy", lookback_days=3),
+            as_of=datetime(2026, 7, 3, 10),
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].stance, "china_liquidity_tightening")
+        self.assertIn("非银金融", events[0].negative_sectors)
+
+    def test_pboc_open_market_detail_classifies_net_injection(self):
+        event = parse_open_market_detail(
+            title="公开市场业务交易公告 [2026]第127号",
+            raw_html="""
+            <html><body>
+            为维护银行体系流动性合理充裕，2026年7月3日人民银行以固定利率、数量招标方式
+            开展了1000亿元7天期逆回购操作，中标利率1.40%。
+            今日有300亿元逆回购到期，实现净投放700亿元。
+            </body></html>
+            """,
+            url="https://www.pbc.gov.cn/test.html",
+            published_at=datetime(2026, 7, 3),
+        )
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event.stance, "pboc_net_injection")
+        self.assertIn("净投放 700亿元", event.detail)
+
+    def test_pboc_open_market_detail_classifies_mlf_rate_cut(self):
+        event = parse_open_market_detail(
+            title="中期借贷便利（MLF）操作公告",
+            raw_html="""
+            <html><body>
+            人民银行开展3000亿元中期借贷便利（MLF）操作，操作利率较上次下降10个基点。
+            </body></html>
+            """,
+            url="https://www.pbc.gov.cn/mlf.html",
+            published_at=datetime(2026, 7, 3),
+        )
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event.event_type, "pboc_rate")
+        self.assertEqual(event.stance, "pboc_policy_rate_cut")
+
+    def test_pboc_lpr_events_classify_cut(self):
+        events = build_lpr_events(
+            [
+                {"TRADE_DATE": "2026-06-20", "LPR1Y": 3.45, "LPR5Y": 3.95},
+                {"TRADE_DATE": "2026-07-20", "LPR1Y": 3.35, "LPR5Y": 3.85},
+            ],
+            as_of=datetime(2026, 7, 21, 10),
+            lookback_days=45,
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].stance, "pboc_lpr_cut")
+        self.assertIn("银行", events[0].negative_sectors)
+
+    def test_pboc_reserve_requirement_events_classify_cut(self):
+        events = build_reserve_requirement_events(
+            [
+                {
+                    "公布时间": "2026-07-01",
+                    "大型金融机构-调整幅度": -0.5,
+                    "中小金融机构-调整幅度": -0.5,
+                }
+            ],
+            as_of=datetime(2026, 7, 3, 10),
+            lookback_days=45,
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].stance, "pboc_rrr_cut")
+        self.assertIn("非银金融", events[0].positive_sectors)
+
+    def test_pboc_money_supply_events_classify_m2_reacceleration(self):
+        events = build_money_supply_events(
+            [
+                {"月份": "2026-05", "货币和准货币(M2)-同比增长": 7.2},
+                {"月份": "2026-06", "货币和准货币(M2)-同比增长": 7.8},
+            ],
+            as_of=datetime(2026, 7, 3, 10),
+            lookback_days=45,
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].stance, "m2_growth_reaccelerates")
+
+    def test_pboc_credit_growth_events_classify_loan_contraction(self):
+        events = build_credit_growth_events(
+            [
+                {"月份": "2026-05", "当月": 9000, "当月-同比增长": -8.0},
+                {"月份": "2026-06", "当月": 7000, "当月-同比增长": -18.0},
+            ],
+            as_of=datetime(2026, 7, 3, 10),
+            lookback_days=45,
+            title_prefix="新增人民币贷款",
+            value_field="当月",
+            yoy_field="当月-同比增长",
+            source="test",
+            url="https://example.com",
+            confidence=0.6,
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].stance, "credit_growth_contracts")
+        self.assertIn("非银金融", events[0].negative_sectors)
+
+    def test_pboc_social_financing_events_classify_expansion(self):
+        events = build_social_financing_events(
+            [
+                {"月份": "2026-05", "社会融资规模增量": 10000, "其中-人民币贷款": 7000},
+                {"月份": "2026-06", "社会融资规模增量": 16000, "其中-人民币贷款": 11000},
+            ],
+            as_of=datetime(2026, 7, 3, 10),
+            lookback_days=45,
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].stance, "social_financing_expands")
 
 
 class DisclosureFactorTest(unittest.TestCase):

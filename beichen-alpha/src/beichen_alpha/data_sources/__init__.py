@@ -16,6 +16,16 @@ from .macro_rss_source import MacroRssEventSource, load_macro_rss_feeds
 from .market_data_router import DefaultMarketDataRouter, MarketDataRouter
 from .market_regime_source import AkshareMarketRegimeSource
 from .policy_page_source import PolicyPageEventSource, load_policy_pages
+from .pboc_macro_source import (
+    PBOCMacroIndicatorSource,
+    build_lpr_events,
+    build_money_supply_events,
+    build_reserve_requirement_events,
+    build_social_financing_events,
+    build_credit_growth_events,
+    parse_open_market_detail,
+    parse_open_market_amounts,
+)
 from .profile_source import fetch_tencent_profiles, load_profile_csv, merge_profiles
 from .qlib_bin_source import QlibBinPriceSource
 from .realtime_quote_source import TencentRealtimeQuoteSource, parse_tencent_quote
@@ -44,6 +54,7 @@ __all__ = [
     "DefaultMarketDataRouter",
     "MarketDataRouter",
     "PolicyPageEventSource",
+    "PBOCMacroIndicatorSource",
     "QlibBinPriceSource",
     "UniverseResult",
     "fetch_tencent_profiles",
@@ -58,6 +69,13 @@ __all__ = [
     "load_policy_pages",
     "load_profile_csv",
     "merge_profiles",
+    "build_lpr_events",
+    "build_money_supply_events",
+    "build_reserve_requirement_events",
+    "build_social_financing_events",
+    "build_credit_growth_events",
+    "parse_open_market_detail",
+    "parse_open_market_amounts",
     "save_universe_cache",
     "TencentRealtimeQuoteSource",
     "parse_tencent_quote",

@@ -330,7 +330,9 @@ config/macro_rss_feeds.csv
 config/macro_policy_pages.csv
 ```
 
-当前默认启用财政部政策发布、国家发改委通知和人民银行新闻页面。页面标题只作为低/中置信度政策事件信号，进入 `policy_event` 分类后再映射行业；它不会跳过板块共振、风险日历和实时站稳确认。
+当前默认启用财政部政策发布、国家发改委通知、人民银行新闻/公开市场/LPR 页面、国务院政策页、证监会动态、上交所和深交所动态。页面标题只作为低/中置信度政策事件信号，进入 `policy_event` 分类后再映射行业；它不会跳过板块共振、风险日历和实时站稳确认。
+
+央行数值源默认补充读取人民银行公开市场操作细节，以及 AKShare 免费封装的 LPR、存款准备金率、M2、新增人民币贷款和社融数据，用于识别逆回购/MLF/净投放、LPR/政策利率、RRR 和信用扩张/回落。
 
 人工覆盖源默认读取：
 
@@ -360,6 +362,12 @@ PYTHONPATH=src python3 -m beichen_alpha --disable-macro-rss
 
 ```bash
 PYTHONPATH=src python3 -m beichen_alpha --disable-policy-pages
+```
+
+只关闭央行数值源：
+
+```bash
+PYTHONPATH=src python3 -m beichen_alpha --disable-pboc-macro
 ```
 
 详细枚举见 [`docs/macro_event_factor.md`](docs/macro_event_factor.md)。
