@@ -6,6 +6,7 @@ from beichen_alpha.models import (
     Bar,
     MacroEvent,
     MarketRegime,
+    MarketStructureSnapshot,
     NewsEvent,
     Recommendation,
     RiskCalendarEvent,
@@ -26,6 +27,7 @@ from .levels import (
 )
 from .macro_event_factor import score_macro_events
 from .market_factor import match_sector_signal, score_chain_rotation, score_market_regime, score_sector_rotation
+from .market_structure_factor import score_market_structure
 from .news_factor import score_news_events
 from .policy import score_basic_quality, score_policy
 from .risk_calendar_factor import score_risk_calendar_events, summarize_risk_calendar
@@ -42,6 +44,7 @@ def build_recommendation(
     risk_calendar_events: list[RiskCalendarEvent] | None = None,
     macro_events: list[MacroEvent] | None = None,
     market_regime: MarketRegime | None = None,
+    market_structure: MarketStructureSnapshot | None = None,
     sector_signals: dict[str, SectorSignal] | None = None,
     as_of: datetime | None = None,
 ) -> Recommendation:
@@ -51,6 +54,7 @@ def build_recommendation(
         *score_policy(profile, active_policy),
         *score_basic_quality(profile),
         *score_market_regime(market_regime),
+        *score_market_structure(market_structure),
         *score_macro_events(profile, macro_events or [], as_of=as_of),
         *score_sector_rotation(profile, sector_signals),
         *score_chain_rotation(profile, sector_signals),
@@ -156,6 +160,7 @@ def rank_recommendations(
     risk_calendar_events: dict[str, list[RiskCalendarEvent]] | None = None,
     macro_events: list[MacroEvent] | None = None,
     market_regime: MarketRegime | None = None,
+    market_structure: MarketStructureSnapshot | None = None,
     sector_signals: dict[str, SectorSignal] | None = None,
     as_of: datetime | None = None,
 ) -> list[Recommendation]:
@@ -175,6 +180,7 @@ def rank_recommendations(
             risk_calendar_events=(risk_calendar_events or {}).get(code),
             macro_events=macro_events,
             market_regime=market_regime,
+            market_structure=market_structure,
             sector_signals=sector_signals,
             as_of=as_of,
         )
@@ -206,6 +212,7 @@ def holding_period_text(policy: StrategyPolicy) -> str:
 CANDIDATE_FACTOR_GROUPS = {
     "大盘过滤": "大盘环境",
     "市场温度": "大盘环境",
+    "交易结构": "交易结构",
     "宏观事件": "宏观事件",
     "周期产业": "风格偏向",
     "行业轮动": "行业共振",
@@ -234,6 +241,7 @@ CANDIDATE_FACTOR_GROUPS = {
 
 CANDIDATE_GROUP_ORDER = (
     "大盘环境",
+    "交易结构",
     "宏观事件",
     "风格偏向",
     "行业共振",

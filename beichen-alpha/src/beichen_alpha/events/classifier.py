@@ -28,8 +28,36 @@ DISCLOSURE_HARD_NEGATIVE_RULES: list[tuple[str, tuple[str, ...], float]] = [
         1.0,
     ),
     ("major_litigation", ("重大诉讼", "重大仲裁", "诉讼", "仲裁", "冻结", "查封"), 0.9),
-    ("shareholder_reduce", ("减持计划", "拟减持", "减持股份", "股份减持", "被动减持"), 0.85),
+    (
+        "shareholder_reduce",
+        (
+            "控股股东拟减持",
+            "实际控制人拟减持",
+            "董监高拟减持",
+            "清仓减持",
+            "被动减持",
+            "减持数量超过",
+        ),
+        0.9,
+    ),
     ("delisting_risk", ("退市", "*ST", "ST", "风险警示", "终止上市"), 1.0),
+]
+
+DISCLOSURE_SOFT_NEGATIVE_RULES: list[tuple[str, tuple[str, ...], float]] = [
+    ("shareholder_reduce", ("减持计划", "拟减持", "减持股份", "股份减持"), 0.72),
+    ("earnings_revision", ("业绩预告修正", "业绩快报修正", "业绩下修"), 0.85),
+    ("exchange_inquiry", ("问询函", "关注函", "监管工作函"), 0.65),
+]
+
+DISCLOSURE_POSITIVE_RULES: list[tuple[str, tuple[str, ...], float]] = [
+    (
+        "share_buyback",
+        ("回购股份", "股份回购", "回购方案", "首次回购", "回购公司股份", "集中竞价方式回购", "集中竞价交易方式回购"),
+        0.82,
+    ),
+    ("shareholder_increase", ("增持计划", "拟增持", "增持股份", "完成增持"), 0.72),
+    ("major_contract", ("重大合同", "项目中标", "中标通知书", "签订合同", "订单"), 0.72),
+    ("equity_incentive", ("股权激励", "员工持股计划", "限制性股票激励"), 0.62),
 ]
 
 EARNINGS_CONTEXT = ("业绩", "利润", "净利润", "扣非", "亏损", "盈利")
@@ -128,6 +156,21 @@ def classify_disclosure(
                 hard_exclude=True,
             )
 
+    for event_type, keywords, importance in DISCLOSURE_SOFT_NEGATIVE_RULES:
+        if any(keyword in text for keyword in keywords):
+            return NewsEvent(
+                code=code,
+                title=title,
+                source=source,
+                url=url,
+                published_at=published_at,
+                event_type=event_type,
+                polarity=-1,
+                importance=importance,
+                confidence=0.8,
+                hard_exclude=False,
+            )
+
     if has_earnings_context(text) and any(keyword in text for keyword in EARNINGS_POSITIVE):
         return NewsEvent(
             code=code,
@@ -140,6 +183,20 @@ def classify_disclosure(
             importance=0.75,
             confidence=0.85,
         )
+
+    for event_type, keywords, importance in DISCLOSURE_POSITIVE_RULES:
+        if any(keyword in text for keyword in keywords):
+            return NewsEvent(
+                code=code,
+                title=title,
+                source=source,
+                url=url,
+                published_at=published_at,
+                event_type=event_type,
+                polarity=1,
+                importance=importance,
+                confidence=0.82,
+            )
 
     return NewsEvent(
         code=code,

@@ -9,6 +9,7 @@ from .levels import (
     calc_trailing_stop_price,
 )
 from .market_factor import score_chain_rotation, score_market_regime, score_sector_rotation
+from .market_structure_factor import score_market_structure
 from .macro_event_factor import score_macro_events
 from .policy import score_policy
 from .realtime import build_realtime_check, build_realtime_checks
@@ -26,6 +27,7 @@ __all__ = [
     "rank_recommendations",
     "score_disclosure_events",
     "score_market_regime",
+    "score_market_structure",
     "score_macro_events",
     "score_chain_rotation",
     "score_policy",

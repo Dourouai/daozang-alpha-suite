@@ -15,6 +15,7 @@ from .macro_event_source import CsvMacroEventSource, load_macro_events_csv
 from .macro_rss_source import MacroRssEventSource, load_macro_rss_feeds
 from .market_data_router import DefaultMarketDataRouter, MarketDataRouter
 from .market_regime_source import AkshareMarketRegimeSource
+from .market_structure_source import AkshareMarketStructureSource
 from .policy_page_source import PolicyPageEventSource, load_policy_pages
 from .pboc_macro_source import (
     PBOCMacroIndicatorSource,
@@ -30,6 +31,7 @@ from .profile_source import fetch_tencent_profiles, load_profile_csv, merge_prof
 from .qlib_bin_source import QlibBinPriceSource
 from .realtime_quote_source import TencentRealtimeQuoteSource, parse_tencent_quote
 from .sector_rotation_source import AkshareSectorRotationSource, build_sector_signals_from_price_map
+from .stats_macro_source import StatsMacroEventSource
 from .universe_source import (
     AkshareUniverseSource,
     UniverseResult,
@@ -42,6 +44,7 @@ __all__ = [
     "AksharePriceSource",
     "BaostockPriceSource",
     "AkshareMarketRegimeSource",
+    "AkshareMarketStructureSource",
     "AkshareSectorRotationSource",
     "AkshareUniverseSource",
     "build_sector_signals_from_price_map",
@@ -55,6 +58,7 @@ __all__ = [
     "MarketDataRouter",
     "PolicyPageEventSource",
     "PBOCMacroIndicatorSource",
+    "StatsMacroEventSource",
     "QlibBinPriceSource",
     "UniverseResult",
     "fetch_tencent_profiles",

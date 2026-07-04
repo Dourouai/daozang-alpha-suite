@@ -26,6 +26,7 @@ from beichen_alpha.data_sources.universe_source import (
 )
 from beichen_alpha.data_sources.profile_source import load_profile_csv
 from beichen_alpha.data_sources.market_regime_source import build_market_regime
+from beichen_alpha.data_sources.market_structure_source import build_margin_summary, build_northbound_summary
 from beichen_alpha.data_sources.macro_event_source import CsvMacroEventSource
 from beichen_alpha.data_sources.macro_rss_source import MacroRssFeed, parse_rss_events
 from beichen_alpha.data_sources.policy_page_source import PolicyPage, parse_policy_page_events, parse_policy_page_items
@@ -36,6 +37,11 @@ from beichen_alpha.data_sources.pboc_macro_source import (
     build_reserve_requirement_events,
     build_social_financing_events,
     parse_open_market_detail,
+)
+from beichen_alpha.data_sources.stats_macro_source import (
+    build_consensus_surprise_events,
+    build_indicator_acceleration_events,
+    build_pmi_events,
 )
 from beichen_alpha.data_sources.realtime_quote_source import parse_tencent_quote
 from beichen_alpha.data_sources.market_data_router import MarketDataRouter
@@ -62,7 +68,7 @@ from beichen_alpha.data_sources.sector_rotation_source import build_sector_signa
 from beichen_alpha.data_sources.sector_rotation_source import normalize_sector_name
 from beichen_alpha.distill import distill_article, opinion_signal_to_dict
 from beichen_alpha.events import classify_disclosure, classify_news
-from beichen_alpha.models import ArticleContent, Bar, GlobalIndicator, MacroEvent, NewsEvent, OpinionSignal, RealtimeQuote, Recommendation, RiskCalendarEvent, SectorSignal, StockProfile, StrategyPolicy
+from beichen_alpha.models import ArticleContent, Bar, GlobalIndicator, MacroEvent, MarketStructureSnapshot, NewsEvent, OpinionSignal, RealtimeQuote, Recommendation, RiskCalendarEvent, SectorSignal, StockProfile, StrategyPolicy
 from beichen_alpha.news_sources.opinion_signal_news import OpinionSignalNewsSource, signal_to_news_event
 from beichen_alpha.notifiers import render_feishu_recommendations_card
 from beichen_alpha.reports import render_global_linkage_report
@@ -89,6 +95,7 @@ from beichen_alpha.strategy.levels import calc_invalid_price as calc_level_inval
 from beichen_alpha.strategy.levels import calc_take_profit_price as calc_level_take_profit_price
 from beichen_alpha.strategy.macro_event_factor import score_macro_events
 from beichen_alpha.strategy.market_factor import score_chain_rotation, score_market_regime, score_sector_rotation
+from beichen_alpha.strategy.market_structure_factor import score_market_structure
 from beichen_alpha.strategy.policy import score_policy
 from beichen_alpha.strategy.risk_calendar_factor import score_risk_calendar_events
 from beichen_alpha.strategy.factors import score_bars
@@ -382,6 +389,73 @@ class MarketDataSourceTest(unittest.TestCase):
         score = score_market_regime(regime)[0]
         self.assertGreater(score.score, 0)
         self.assertTrue(score.passed)
+
+    def test_market_structure_scores_funding_inflow(self):
+        snapshot = MarketStructureSnapshot(
+            as_of=datetime(2026, 7, 3),
+            breadth=0.7,
+            limit_up_count=90,
+            limit_down_count=10,
+            turnover_100m=11000,
+            margin_balance_100m=18000,
+            margin_balance_change_pct=0.02,
+            margin_buy_100m=1200,
+            margin_buy_turnover_ratio=0.11,
+            northbound_net_buy_100m=55,
+            northbound_5d_net_buy_100m=140,
+            detail="测试交易结构",
+        )
+        score = score_market_structure(snapshot)[0]
+
+        self.assertEqual(score.name, "交易结构")
+        self.assertGreater(score.score, 0)
+        self.assertTrue(score.passed)
+        self.assertIn("北向明显净买", score.detail)
+
+    def test_market_structure_penalizes_weak_breadth_and_outflow(self):
+        snapshot = MarketStructureSnapshot(
+            as_of=datetime(2026, 7, 3),
+            breadth=0.3,
+            limit_up_count=8,
+            limit_down_count=60,
+            turnover_100m=8000,
+            margin_balance_change_pct=-0.02,
+            northbound_net_buy_100m=-60,
+            northbound_5d_net_buy_100m=-160,
+            detail="测试交易结构",
+        )
+        score = score_market_structure(snapshot)[0]
+
+        self.assertLess(score.score, 0)
+        self.assertFalse(score.passed)
+
+    def test_market_structure_source_combines_margin_and_northbound(self):
+        margin = build_margin_summary(
+            [
+                {"日期": "2026-07-02", "融资融券余额": 10000, "融资买入额": 500},
+                {"日期": "2026-07-03", "融资融券余额": 10200, "融资买入额": 650},
+            ],
+            [
+                {"日期": "2026-07-02", "融资融券余额": 8000, "融资买入额": 300},
+                {"日期": "2026-07-03", "融资融券余额": 8100, "融资买入额": 420},
+            ],
+        )
+        northbound = build_northbound_summary(
+            [
+                {"日期": "2026-06-29", "当日成交净买额": 10},
+                {"日期": "2026-06-30", "当日成交净买额": 20},
+                {"日期": "2026-07-01", "当日成交净买额": -5},
+                {"日期": "2026-07-02", "当日成交净买额": 30},
+                {"日期": "2026-07-03", "当日成交净买额": 40},
+            ],
+            as_of=datetime(2026, 7, 3, 15),
+        )
+
+        self.assertEqual(margin["balance_100m"], 18300)
+        self.assertGreater(margin["balance_change_pct"], 0)
+        self.assertEqual(margin["buy_100m"], 1070)
+        self.assertEqual(northbound["net_buy_100m"], 40)
+        self.assertEqual(northbound["net_buy_5d_100m"], 95)
 
     def test_sector_rotation_scores_matching_profile(self):
         history_rows = [
@@ -911,6 +985,56 @@ class MacroEventFactorTest(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].stance, "social_financing_expands")
 
+    def test_stats_macro_pmi_events_classify_improvement(self):
+        events = build_pmi_events(
+            [
+                {"月份": "2026-05", "制造业-指数": 49.8, "非制造业-指数": 50.2},
+                {"月份": "2026-06", "制造业-指数": 50.3, "非制造业-指数": 50.8},
+            ],
+            as_of=datetime(2026, 7, 3, 10),
+            lookback_days=45,
+        )
+
+        self.assertGreaterEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "china_macro_surprise")
+        self.assertIn(events[0].stance, {"china_pmi_improves", "china_pmi_weakens"})
+
+    def test_stats_macro_consensus_surprise_classifies_upside(self):
+        events = build_consensus_surprise_events(
+            [
+                {"日期": "2026-06-16", "今值": 6.8, "预测值": 5.5, "前值": 5.2},
+            ],
+            as_of=datetime(2026, 7, 3, 10),
+            lookback_days=45,
+            title="规模以上工业增加值同比",
+            threshold=0.8,
+            source="test",
+            url="https://example.com",
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].stance, "china_growth_upside_surprise")
+        self.assertIn("非银金融", events[0].positive_sectors)
+
+    def test_stats_macro_indicator_acceleration_classifies_slowdown(self):
+        events = build_indicator_acceleration_events(
+            [
+                {"月份": "2026-05", "同比增长": 4.2},
+                {"月份": "2026-06", "同比增长": 2.9},
+            ],
+            as_of=datetime(2026, 7, 3, 10),
+            lookback_days=45,
+            title="社零同比增速",
+            value_field="同比增长",
+            threshold=0.8,
+            source="test",
+            url="https://example.com",
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].stance, "china_growth_slows")
+        self.assertIn("非银金融", events[0].negative_sectors)
+
 
 class DisclosureFactorTest(unittest.TestCase):
     def test_shareholder_reduce_disclosure_excludes(self):
@@ -934,6 +1058,44 @@ class DisclosureFactorTest(unittest.TestCase):
         self.assertEqual(score.name, "公告事件")
         self.assertGreater(score.score, 0)
         self.assertTrue(score.passed)
+
+    def test_buyback_disclosure_scores_positive(self):
+        event = classify_disclosure(
+            code="600160",
+            title="关于以集中竞价交易方式回购公司股份方案的公告",
+            published_at=datetime(2026, 7, 2),
+        )
+        score = score_disclosure_events([event], as_of=datetime(2026, 7, 2))[0]
+
+        self.assertEqual(event.event_type, "share_buyback")
+        self.assertGreater(score.score, 0)
+        self.assertIn("利好公告", score.detail)
+
+    def test_soft_reduce_disclosure_penalizes_without_excluding(self):
+        event = classify_disclosure(
+            code="600160",
+            title="关于持股5%以上股东减持计划的预披露公告",
+            published_at=datetime(2026, 7, 2),
+        )
+        score = score_disclosure_events([event], as_of=datetime(2026, 7, 2))[0]
+
+        self.assertEqual(event.event_type, "shareholder_reduce")
+        self.assertFalse(event.hard_exclude)
+        self.assertEqual(score.name, "公告事件")
+        self.assertLess(score.score, 0)
+        self.assertTrue(score.passed)
+
+    def test_penalty_disclosure_remains_hard_exclude(self):
+        event = classify_disclosure(
+            code="600160",
+            title="关于收到行政处罚事先告知书的公告",
+            published_at=datetime(2026, 7, 2),
+        )
+        score = score_disclosure_events([event], as_of=datetime(2026, 7, 2))[0]
+
+        self.assertTrue(event.hard_exclude)
+        self.assertEqual(score.name, "公告风险")
+        self.assertFalse(score.passed)
 
     def test_disclosure_risk_excludes_recommendation(self):
         event = classify_disclosure(

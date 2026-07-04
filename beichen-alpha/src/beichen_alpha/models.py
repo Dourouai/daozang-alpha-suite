@@ -95,6 +95,22 @@ class MarketRegime:
 
 
 @dataclass(frozen=True)
+class MarketStructureSnapshot:
+    as_of: datetime
+    breadth: float | None = None
+    limit_up_count: int | None = None
+    limit_down_count: int | None = None
+    turnover_100m: float | None = None
+    margin_balance_100m: float | None = None
+    margin_balance_change_pct: float | None = None
+    margin_buy_100m: float | None = None
+    margin_buy_turnover_ratio: float | None = None
+    northbound_net_buy_100m: float | None = None
+    northbound_5d_net_buy_100m: float | None = None
+    detail: str = ""
+
+
+@dataclass(frozen=True)
 class SectorSignal:
     name: str
     score: int

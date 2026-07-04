@@ -11,6 +11,7 @@ from .content_sources import ManualTextSource, WechatArticleSource
 from .data_sources import (
     AksharePriceSource,
     AkshareMarketRegimeSource,
+    AkshareMarketStructureSource,
     AkshareSectorRotationSource,
     AkshareUniverseSource,
     BaostockPriceSource,
@@ -22,6 +23,7 @@ from .data_sources import (
     MacroRssEventSource,
     PBOCMacroIndicatorSource,
     PolicyPageEventSource,
+    StatsMacroEventSource,
     build_sector_signals_from_price_map,
     fetch_universe_rows_and_profiles,
     fetch_tencent_profiles,
@@ -135,7 +137,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--disable-pboc-macro", action="store_true", help="disable PBOC liquidity and credit indicator source")
     parser.add_argument("--pboc-macro-lookback-days", type=int, default=45, help="PBOC numeric macro event lookback window")
     parser.add_argument("--pboc-open-market-timeout", type=float, default=8.0, help="timeout for PBOC open-market detail pages")
+    parser.add_argument("--disable-stats-macro", action="store_true", help="disable NBS macro surprise source")
+    parser.add_argument("--stats-macro-lookback-days", type=int, default=45, help="NBS macro surprise lookback window")
     parser.add_argument("--disable-sector-rotation", action="store_true", help="disable sector rotation factor")
+    parser.add_argument("--disable-market-structure", action="store_true", help="disable market structure factor")
     parser.add_argument("--sector-limit", type=int, default=40, help="max industry boards checked for rotation")
     parser.add_argument("--disable-opinions", action="store_true", help="disable personal opinion news source")
     parser.add_argument("--opinion-lookback-days", type=int, default=7, help="personal opinion signal lookback window")
@@ -227,12 +232,17 @@ def main(argv: list[str] | None = None) -> int:
                 lookback_days=args.pboc_macro_lookback_days,
                 open_market_timeout=args.pboc_open_market_timeout,
             ).load()
-            macro_events = csv_macro_events + rss_macro_events + policy_page_events + pboc_macro_events
+            stats_macro_events = [] if args.disable_stats_macro else StatsMacroEventSource(
+                as_of=as_of,
+                lookback_days=args.stats_macro_lookback_days,
+            ).load()
+            macro_events = csv_macro_events + rss_macro_events + policy_page_events + pboc_macro_events + stats_macro_events
             log_step(
                 args,
                 (
                     f"宏观事件: CSV {len(csv_macro_events)} 个，RSS {len(rss_macro_events)} 个，"
-                    f"政策页 {len(policy_page_events)} 个，央行数值 {len(pboc_macro_events)} 个"
+                    f"政策页 {len(policy_page_events)} 个，央行数值 {len(pboc_macro_events)} 个，"
+                    f"统计局 {len(stats_macro_events)} 个"
                 ),
             )
         if args.disable_market_regime or args.source == "csv":
@@ -242,6 +252,13 @@ def main(argv: list[str] | None = None) -> int:
             log_step(args, "加载市场温度源...")
             market_regime = AkshareMarketRegimeSource(end_date=args.end).load()
             log_step(args, f"市场温度: {market_regime.temperature if market_regime else '不可用'}")
+        if args.disable_market_structure or args.source == "csv":
+            log_step(args, "已跳过交易结构源。")
+            market_structure = None
+        else:
+            log_step(args, "加载交易结构源...")
+            market_structure = AkshareMarketStructureSource(as_of=as_of).load()
+            log_step(args, f"交易结构: {market_structure.detail if market_structure else '不可用'}")
         if args.disable_sector_rotation or args.source == "csv":
             log_step(args, "已跳过行业轮动源。")
             sector_signals = {}
@@ -314,6 +331,7 @@ def main(argv: list[str] | None = None) -> int:
             risk_calendar_events=risk_calendar_events,
             macro_events=macro_events,
             market_regime=market_regime,
+            market_structure=market_structure,
             sector_signals=sector_signals,
             as_of=as_of,
         )
@@ -697,6 +715,7 @@ def daily_refresh_pool_main(argv: list[str]) -> int:
     parser.add_argument("--end", default=None, help="end date, YYYYMMDD")
     parser.add_argument("--adjust", default="qfq", choices=["", "qfq", "hfq"], help="stock adjustment mode")
     parser.add_argument("--sector-limit", type=int, default=40, help="max industry boards checked for rotation")
+    parser.add_argument("--disable-market-structure", action="store_true", help="disable market structure factor")
     parser.add_argument("--risk-forward-days", type=int, default=30, help="future risk calendar window")
     parser.add_argument("--disable-risk-calendar", action="store_true", help="disable risk calendar factor")
     parser.add_argument("--disable-pledge-risk", action="store_true", help="skip pledge risk checks")
@@ -712,6 +731,8 @@ def daily_refresh_pool_main(argv: list[str]) -> int:
     parser.add_argument("--disable-pboc-macro", action="store_true", help="disable PBOC liquidity and credit indicator source")
     parser.add_argument("--pboc-macro-lookback-days", type=int, default=45, help="PBOC numeric macro event lookback window")
     parser.add_argument("--pboc-open-market-timeout", type=float, default=8.0, help="timeout for PBOC open-market detail pages")
+    parser.add_argument("--disable-stats-macro", action="store_true", help="disable NBS macro surprise source")
+    parser.add_argument("--stats-macro-lookback-days", type=int, default=45, help="NBS macro surprise lookback window")
     parser.add_argument("--include-news", action="store_true", help="include ordinary AKShare news; slower")
     parser.add_argument("--include-disclosures", action="store_true", help="include CNINFO disclosures; slower")
     parser.add_argument("--disable-opinions", action="store_true", help="disable personal opinion source")
@@ -788,17 +809,23 @@ def daily_refresh_pool_main(argv: list[str]) -> int:
                 lookback_days=args.pboc_macro_lookback_days,
                 open_market_timeout=args.pboc_open_market_timeout,
             ).load()
-            macro_events = csv_macro_events + rss_macro_events + policy_page_events + pboc_macro_events
+            stats_macro_events = [] if args.disable_stats_macro else StatsMacroEventSource(
+                as_of=as_of,
+                lookback_days=args.stats_macro_lookback_days,
+            ).load()
+            macro_events = csv_macro_events + rss_macro_events + policy_page_events + pboc_macro_events + stats_macro_events
             log_step(
                 args,
                 (
                     f"宏观事件: CSV {len(csv_macro_events)} 个，RSS {len(rss_macro_events)} 个，"
-                    f"政策页 {len(policy_page_events)} 个，央行数值 {len(pboc_macro_events)} 个"
+                    f"政策页 {len(policy_page_events)} 个，央行数值 {len(pboc_macro_events)} 个，"
+                    f"统计局 {len(stats_macro_events)} 个"
                 ),
             )
 
         log_step(args, "加载市场温度和行业轮动...")
         market_regime = AkshareMarketRegimeSource(end_date=args.end).load()
+        market_structure = None if args.disable_market_structure else AkshareMarketStructureSource(as_of=as_of).load()
         sector_signals = AkshareSectorRotationSource(limit=args.sector_limit, end_date=args.end).load()
         if not sector_signals:
             sector_signals = build_sector_signals_from_price_map(price_map, profiles, benchmark_code=args.benchmark)
@@ -846,6 +873,7 @@ def daily_refresh_pool_main(argv: list[str]) -> int:
             risk_calendar_events=risk_calendar_events,
             macro_events=macro_events,
             market_regime=market_regime,
+            market_structure=market_structure,
             sector_signals=sector_signals,
             as_of=as_of,
         )

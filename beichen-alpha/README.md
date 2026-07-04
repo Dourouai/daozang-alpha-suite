@@ -253,6 +253,10 @@ export FEISHU_EVENT_VERIFY_TOKEN=""
 export FEISHU_CHAT_HOST="127.0.0.1"
 export FEISHU_CHAT_PORT="8787"
 export FEISHU_CHAT_ALLOW_WEBHOOK_FALLBACK="false"
+export BEICHEN_CHAT_LLM_ENABLED="false"
+export BEICHEN_LLM_API_KEY=""
+export BEICHEN_LLM_MODEL="gpt-4.1-mini"
+export BEICHEN_LLM_BASE_URL="https://api.openai.com/v1"
 ```
 
 第一版支持的对话命令：
@@ -262,6 +266,7 @@ export FEISHU_CHAT_ALLOW_WEBHOOK_FALLBACK="false"
 - `持仓`：查看本地持仓摘要。
 - `计划`：查看最近一次 3 日交易计划。
 - `日志`：查看决策日志摘要。
+- 自然语言问题：配置 `BEICHEN_CHAT_LLM_ENABLED=true` 和大模型 API key 后，会基于本地持仓、计划和日志做解释；未配置时返回明确提示。
 
 道藏 Alpha 不再维护独立飞书 webhook。道藏只输出模型分数和研究报告；北辰 webhook 负责主动推送，`daocang` 应用机器人负责群内对话。
 
@@ -409,12 +414,13 @@ content_sources -> distill -> data/opinion_signals.jsonl
 | 短线过热 | 避免 5 日涨幅或距 5 日线过大时追高 |
 | 3-5日赔率 | 控制短线买点到失效线的距离 |
 | 市场温度 | 判断当前环境是否适合做 3-5 天短线，偏冷扣分、偏暖加分、过热谨慎 |
+| 交易结构 | 汇总市场宽度、涨跌停、两融和北向资金，只做候选加减分，不直接生成买入 |
 | 风格偏向 | 根据当前 `cycle` 给红利、防御、成长、通胀、复苏等风格做轻量加减分；`balanced` 已降低防御/能源权重 |
-| 宏观事件 | 把美国就业、通胀、美联储官员讲话、美元、美债、原油、地缘风险、费半和日韩半导体链映射为 A 股行业加减分 |
+| 宏观事件 | 把海外流动性、国内央行/政策、国家统计局 surprise、美元、美债、原油、费半等映射为 A 股行业加减分 |
 | 行业轮动 | 判断个股所属行业是否处在 3/5 日相对强势和放量状态 |
 | 产业链传导 | 判断 AI→半导体→电子/材料/化工/资源、新能源→材料/资源、金融链等是否出现健康接力或退潮补涨风险 |
 | 风险日历 | 识别未来解禁、股权质押、减持、问询处罚、诉讼、业绩预警等短线踩雷风险 |
-| 公告风险 | 识别巨潮公告里的预亏、减持、诉讼、处罚、退市风险，重大风险直接排除 |
+| 公告风险/公告事件 | 识别巨潮公告里的预亏、减持、诉讼、处罚、退市风险；回购、增持、业绩预增、大合同等转为公告事件加分，重大风险直接排除 |
 | 新闻事件 | 识别近窗利好/利空事件；普通新闻和个人观点源只做加减分，重大硬风险优先交给公告源 |
 
 公告风险因子默认开启：
@@ -454,11 +460,18 @@ PYTHONPATH=src python3 -m beichen_alpha --cycle defensive --disable-news
 PYTHONPATH=src python3 -m beichen_alpha --disable-market-regime --disable-sector-rotation
 ```
 
+关闭交易结构或中国宏观 surprise 源：
+
+```bash
+PYTHONPATH=src python3 -m beichen_alpha --disable-market-structure
+PYTHONPATH=src python3 -m beichen_alpha --disable-stats-macro
+```
+
 ## 输出字段
 
 - `score`: 兼容旧字段，目前等同于 `candidate_score`
-- `candidate_score`: 候选评分，用来判断“值不值得看”；由大盘环境、宏观事件、风格偏向、行业共振、个股强弱、流动性、观点偏向、基本质量和风险扣分汇总。
-- `candidate_breakdown`: 候选评分拆分，例如 `大盘环境+20 宏观事件+8 风格偏向+6 行业共振+18 个股强弱+72 流动性+30 风险扣分-14`。
+- `candidate_score`: 候选评分，用来判断“值不值得看”；由大盘环境、交易结构、宏观事件、风格偏向、行业共振、个股强弱、流动性、观点偏向、基本质量和风险扣分汇总。
+- `candidate_breakdown`: 候选评分拆分，例如 `大盘环境+20 交易结构+8 宏观事件+8 风格偏向+6 行业共振+18 个股强弱+72 流动性+30 风险扣分-14`。
 - `macro_events`: 宏观事件匹配摘要，例如 `美国就业弱于预期 dovish 黄金+8`。
 - `execution_score`: 实时执行评分，仅在开启 `--realtime` 时输出；由实时站稳、放量确认、VWAP、板块同步、宏观同步、追高惩罚和周五/T+1 惩罚汇总。
 - `execution_breakdown`: 执行评分拆分，用来解释为什么是 `实时可买`、`待站稳`、`接近确认` 或 `不执行`。

@@ -17,19 +17,30 @@ def score_disclosure_events(events: list[NewsEvent], as_of: datetime | None = No
         return [FactorScore("公告风险", -180, False, titles)]
 
     positive = []
+    negative = []
     score = 0
     for event in events:
-        if event.polarity <= 0:
+        if event.polarity == 0:
             continue
         contribution = int(
-            round(event.polarity * event.importance * event.confidence * time_decay(event, as_of) * 24)
+            round(abs(event.polarity) * event.importance * event.confidence * time_decay(event, as_of) * 24)
         )
-        if contribution > 0:
+        if contribution <= 0:
+            continue
+        if event.polarity > 0:
             score += contribution
             positive.append(event.title)
+        else:
+            score -= contribution
+            negative.append(event.title)
 
-    score = min(score, 24)
-    if score <= 0:
+    score = max(min(score, 24), -32)
+    if score == 0:
         return [FactorScore("公告风险", 0, True, "近窗无重大风险公告")]
 
-    return [FactorScore("公告事件", score, True, "利好公告: " + "；".join(positive[:2]))]
+    detail_parts = []
+    if positive:
+        detail_parts.append("利好公告: " + "；".join(positive[:2]))
+    if negative:
+        detail_parts.append("负面公告: " + "；".join(negative[:2]))
+    return [FactorScore("公告事件", score, True, "；".join(detail_parts))]
