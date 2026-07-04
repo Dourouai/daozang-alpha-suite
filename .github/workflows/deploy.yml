@@ -22,13 +22,18 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Check required secrets
+      - name: Check deploy secrets
+        id: deploy_secrets
         run: |
-          test -n "$DEPLOY_HOST" || (echo "Missing DAOZANG_DEPLOY_HOST" >&2; exit 1)
-          test -n "$DEPLOY_USER" || (echo "Missing DAOZANG_DEPLOY_USER" >&2; exit 1)
-          test -n "$DEPLOY_SSH_KEY" || (echo "Missing DAOZANG_DEPLOY_SSH_KEY" >&2; exit 1)
+          if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_USER" ] || [ -z "$DEPLOY_SSH_KEY" ]; then
+            echo "::notice::Missing deploy secrets; skipping SSH deploy."
+            echo "deploy_enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy_enabled=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Configure SSH
+        if: steps.deploy_secrets.outputs.deploy_enabled == 'true'
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/daozang_deploy_key
@@ -36,6 +41,7 @@ jobs:
           ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
       - name: Deploy over SSH
+        if: steps.deploy_secrets.outputs.deploy_enabled == 'true'
         run: |
           ssh -i ~/.ssh/daozang_deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
