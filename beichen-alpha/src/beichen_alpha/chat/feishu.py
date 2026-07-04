@@ -56,7 +56,7 @@ class FeishuOpenApiClient:
         return token
 
     def reply_text(self, message_id: str, text: str) -> dict[str, Any]:
-        return self.post_json(
+        result = self.post_json(
             f"{self.base_url}/im/v1/messages/{message_id}/reply",
             {
                 "msg_type": "text",
@@ -64,6 +64,10 @@ class FeishuOpenApiClient:
             },
             auth=True,
         )
+        code = result.get("code", 0)
+        if str(code) != "0":
+            raise RuntimeError(f"feishu reply failed code={code} msg={result.get('msg', '')}")
+        return result
 
     def post_json(self, url: str, payload: dict[str, Any], auth: bool) -> dict[str, Any]:
         headers = {"Content-Type": "application/json; charset=utf-8"}
@@ -130,35 +134,73 @@ class FeishuEventAdapter:
         if "challenge" in payload:
             return FeishuEventResult(200, {"challenge": payload["challenge"]})
         if not self.verify_payload(payload, encrypted_payload=encrypted_payload):
-            print(
-                json.dumps(
-                    {
-                        "event": "feishu_verify_token_error",
-                        "payload_keys": sorted(payload.keys()),
-                        "header_keys": sorted((payload.get("header") or {}).keys()),
-                        "has_token": bool(payload.get("token") or (payload.get("header") or {}).get("token")),
-                        "encrypted": encrypted_payload,
-                    },
-                    ensure_ascii=False,
-                ),
-                file=sys.stderr,
-                flush=True,
+            self.log_event(
+                "feishu_verify_token_error",
+                {
+                    "payload_keys": sorted(payload.keys()),
+                    "header_keys": sorted((payload.get("header") or {}).keys()),
+                    "has_token": bool(payload.get("token") or (payload.get("header") or {}).get("token")),
+                    "encrypted": encrypted_payload,
+                },
             )
             return FeishuEventResult(403, {"error": "invalid verify token"})
         message = self.extract_message(payload)
         if message is None:
+            event = payload.get("event") or {}
+            raw_message = event.get("message") or {}
+            header = payload.get("header") or {}
+            self.log_event(
+                "feishu_chat_event_ignored",
+                {
+                    "event_type": header.get("event_type") or "",
+                    "has_message": bool(raw_message),
+                    "message_type": raw_message.get("message_type") or "",
+                },
+            )
             return FeishuEventResult(200, {"code": 0, "msg": "ignored"})
         response = handle_chat_message(message, self.project_dir)
+        self.log_event(
+            "feishu_chat_message_received",
+            {
+                "intent": response.intent,
+                "has_message_id": bool(message.message_id),
+                "has_chat_id": bool(message.chat_id),
+                "has_user_id": bool(message.user_id),
+            },
+        )
         try:
-            self.send_response(message, response.text)
+            delivery = self.send_response(message, response.text)
+            self.log_event(
+                "feishu_chat_reply_sent",
+                {
+                    "intent": response.intent,
+                    "delivery_code": delivery.get("code", 0),
+                    "delivery_msg": delivery.get("msg", ""),
+                },
+            )
             payload = {"code": 0, "msg": "ok"}
         except Exception as exc:
+            self.log_event(
+                "feishu_chat_reply_error",
+                {
+                    "intent": response.intent,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
+            )
             payload = {
                 "code": 0,
                 "msg": "handled_without_delivery",
                 "send_error": f"{type(exc).__name__}: {exc}",
             }
         return FeishuEventResult(200, payload, response=response)
+
+    def log_event(self, event: str, payload: dict[str, Any]) -> None:
+        print(
+            json.dumps({"event": event, **payload}, ensure_ascii=False),
+            file=sys.stderr,
+            flush=True,
+        )
 
     def verify_payload(self, payload: dict[str, Any], encrypted_payload: bool = False) -> bool:
         if not self.verify_token:
@@ -195,13 +237,11 @@ class FeishuEventAdapter:
             message_id=str(message.get("message_id") or ""),
         )
 
-    def send_response(self, message: ChatMessage, text: str) -> None:
+    def send_response(self, message: ChatMessage, text: str) -> dict[str, Any]:
         if self.api_client.enabled() and message.message_id:
-            self.api_client.reply_text(message.message_id, text)
-            return
+            return self.api_client.reply_text(message.message_id, text)
         if self.allow_webhook_fallback:
-            self.webhook_sender(text)
-            return
+            return self.webhook_sender(text)
         raise RuntimeError("FEISHU_APP_ID and FEISHU_APP_SECRET are required for daocang chat replies")
 
 

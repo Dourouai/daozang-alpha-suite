@@ -1677,11 +1677,55 @@ class ChatAdapterTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            response = handle_chat_message(ChatMessage("持仓"), project_dir=root)
+            response = handle_chat_message(
+                ChatMessage("持仓"),
+                project_dir=root,
+                quote_loader=lambda symbols: {
+                    "600036": RealtimeQuote(
+                        "600036",
+                        "招商银行",
+                        37.10,
+                        36.80,
+                        37.20,
+                        36.60,
+                        36.70,
+                        1.09,
+                        quote_time=datetime(2026, 7, 3, 10, 30),
+                    )
+                },
+            )
 
         self.assertEqual(response.intent, "positions")
         self.assertIn("招商银行", response.text)
+        self.assertIn("现价 37.10", response.text)
         self.assertIn("止损 35.28", response.text)
+
+    def test_chat_router_recommendation_uses_realtime_and_logs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_records = [
+                make_chat_candidate_record("000963", "华东医药", 92, "条件执行", 30.30, 27.51, 31.51),
+                make_chat_candidate_record("300347", "泰格医药", 111, "观察", 48.35, 44.96, 50.28),
+                make_chat_candidate_record("600196", "复星医药", 87, "观察", 23.63, 21.90, 24.58),
+            ]
+            append_decision_records(source_records, root / "data/decision_logs/recommendations.jsonl")
+
+            response = handle_chat_message(
+                ChatMessage("推荐 医疗行业的3支股票"),
+                project_dir=root,
+                quote_loader=lambda symbols: {
+                    "000963": RealtimeQuote("000963", "华东医药", 30.45, 30.10, 30.60, 29.90, 30.05, 1.33, quote_time=datetime(2026, 7, 3, 10, 31)),
+                    "300347": RealtimeQuote("300347", "泰格医药", 47.20, 46.80, 47.50, 46.50, 46.93, 0.58, quote_time=datetime(2026, 7, 3, 10, 31)),
+                    "600196": RealtimeQuote("600196", "复星医药", 23.10, 23.00, 23.20, 22.90, 23.29, -0.82, quote_time=datetime(2026, 7, 3, 10, 31)),
+                },
+            )
+
+            records = read_decision_records(root / "data/decision_logs/recommendations.jsonl")
+
+        self.assertEqual(response.intent, "recommendation")
+        self.assertIn("医疗/医药 3日短线候选", response.text)
+        self.assertIn("现价 30.45", response.text)
+        self.assertEqual(len([item for item in records if item.get("decision_kind") == "chat_recommendation"]), 3)
 
     def test_chat_router_strips_daocang_mention(self):
         response = handle_chat_message(ChatMessage("@daocang 帮助"))
@@ -1803,6 +1847,52 @@ def make_recommendation(
         candidate_score=score,
         take_profit_price=round(close * 1.06, 2),
     )
+
+
+def make_chat_candidate_record(
+    code: str,
+    name: str,
+    score: int,
+    status: str,
+    confirm: float,
+    stop: float,
+    target: float,
+) -> dict:
+    return {
+        "schema_version": "decision-log-v1",
+        "run_id": "candidate_screen-20260703235959-test",
+        "run_kind": "candidate_screen",
+        "decision_kind": "candidate_recommendation",
+        "logged_at": "2026-07-04T21:00:16",
+        "as_of": "2026-07-03T23:59:59",
+        "rank": 1,
+        "code": code,
+        "name": name,
+        "action": "watch_buy",
+        "status": status,
+        "industry": "医药",
+        "themes": ["医药", "创新药"],
+        "prices": {
+            "close": round(confirm / 1.01, 2),
+            "confirm": confirm,
+            "stop": stop,
+            "target": target,
+        },
+        "scores": {
+            "score": score,
+            "candidate_score": score,
+            "macro_event_score": 0,
+        },
+        "rationale": {
+            "candidate_breakdown": f"测试候选+{score}",
+            "reason": "测试候选",
+        },
+        "risk": {
+            "risk_text": "测试风控",
+            "stop": stop,
+        },
+        "outcome": {},
+    }
 
 
 def write_qlib_feature(path: Path, start_index: int, values: list[float]) -> None:
