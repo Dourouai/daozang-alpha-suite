@@ -83,6 +83,7 @@ from beichen_alpha.strategy.macro_event_factor import score_macro_events
 from beichen_alpha.strategy.market_factor import score_chain_rotation, score_market_regime, score_sector_rotation
 from beichen_alpha.strategy.policy import score_policy
 from beichen_alpha.strategy.risk_calendar_factor import score_risk_calendar_events
+from beichen_alpha.strategy.factors import score_bars
 from beichen_alpha.strategy.trade_plan import build_three_day_trade_plan, infer_trade_group
 from beichen_alpha.data_sources.akshare_source import normalize_symbol
 from beichen_alpha.engine import rank_recommendations
@@ -173,6 +174,24 @@ class EngineTest(unittest.TestCase):
         row = build_recommendation("600000", bars, benchmark)
         self.assertEqual(row.status, "条件执行")
         self.assertIn("次日", row.sell_plan)
+
+    def test_low_short_elasticity_is_penalized(self):
+        benchmark = make_bars("000300", "沪深300", [100, 101, 102, 103, 104, 105, 106])
+        bars = [
+            Bar("600000", "测试银行", "2026-07-01", 10.00, 10.03, 9.98, 10.00, 1000000, 100000000),
+            Bar("600000", "测试银行", "2026-07-02", 10.00, 10.03, 9.98, 10.01, 1000000, 100000000),
+            Bar("600000", "测试银行", "2026-07-03", 10.01, 10.04, 9.99, 10.01, 1000000, 100000000),
+            Bar("600000", "测试银行", "2026-07-04", 10.01, 10.04, 9.99, 10.02, 1000000, 100000000),
+            Bar("600000", "测试银行", "2026-07-05", 10.02, 10.05, 10.00, 10.02, 1000000, 100000000),
+            Bar("600000", "测试银行", "2026-07-06", 10.02, 10.05, 10.00, 10.03, 1000000, 100000000),
+        ]
+
+        scores = score_bars(bars, benchmark, StrategyPolicy(horizon="ultra_short_2_3d"))
+        elasticity = next(item for item in scores if item.name == "短线弹性")
+
+        self.assertFalse(elasticity.passed)
+        self.assertLess(elasticity.score, 0)
+        self.assertIn("近3日振幅", elasticity.detail)
 
     def test_chain_rotation_contributes_to_candidate_score(self):
         benchmark = make_bars("000300", "沪深300", [100, 101, 102, 103, 104, 105, 106])
@@ -1587,6 +1606,38 @@ class ThreeDayTradePlanTest(unittest.TestCase):
         self.assertEqual(infer_trade_group("华能水电"), "公用事业")
         self.assertEqual(infer_trade_group("中国海油"), "能源")
         self.assertEqual(infer_trade_group("中信证券"), "非银金融")
+
+    def test_holding_with_low_elasticity_releases_capital(self):
+        positions = [
+            {
+                "code": "600036",
+                "name": "招商银行",
+                "shares": 100,
+                "cost": 36.89,
+                "confirm": 36.80,
+                "invalid": 35.28,
+                "target": 39.23,
+            }
+        ]
+        recommendation = Recommendation(
+            code="600036",
+            name="招商银行",
+            score=90,
+            status="条件执行",
+            close=36.83,
+            observation_zone="36.50-36.90",
+            confirm_price=36.80,
+            invalid_price=35.28,
+            reason="测试",
+            risk="注意: 短线弹性",
+            candidate_score=90,
+            take_profit_price=39.23,
+        )
+
+        plan = build_three_day_trade_plan([recommendation], positions, capital=10000, top_n=0)
+
+        self.assertEqual(plan.holding_plans[0].action, "资金效率观察")
+        self.assertIn("释放资金", plan.holding_plans[0].trigger)
 
 
 class DecisionLogTest(unittest.TestCase):

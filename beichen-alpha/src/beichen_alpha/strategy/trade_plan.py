@@ -97,6 +97,7 @@ def build_three_day_trade_plan(
         "3天短线：候选不等于买入，必须盘中站上确认价且不超过追高区。",
         "已有持仓周一可以卖出/减仓；只有周一新买入部分受T+1限制。",
         "若当前持仓跌回确认价下方且收不回，优先释放仓位，再执行新候选。",
+        "若持仓短线弹性不足、资金效率低，10:30 前不放量脱离成本区则考虑轮动。",
     )
     return ThreeDayTradePlan(
         capital=capital,
@@ -133,6 +134,12 @@ def build_holding_plan(position: dict[str, Any], recommendation: Recommendation 
     elif price >= target:
         action = "止盈优先"
         trigger = f"到达目标价 {target:.2f} 附近，分批止盈或上移保护线。"
+    elif has_low_capital_efficiency(recommendation, pnl_pct):
+        action = "资金效率观察"
+        trigger = (
+            f"仍在确认价 {confirm:.2f} 上方，但近期短线弹性不足且仍在成本附近；"
+            "周一若10:30前不放量脱离成本/确认区，考虑减仓释放资金，轮动到更强候选。"
+        )
     else:
         action = "继续持有"
         trigger = f"仍在确认价 {confirm:.2f} 上方，继续观察；不加仓。"
@@ -151,6 +158,14 @@ def build_holding_plan(position: dict[str, Any], recommendation: Recommendation 
         action=action,
         trigger=trigger,
     )
+
+
+def has_low_capital_efficiency(recommendation: Recommendation | None, pnl_pct: float) -> bool:
+    if recommendation is None:
+        return False
+    if "短线弹性" not in recommendation.risk:
+        return False
+    return abs(pnl_pct) <= 0.015
 
 
 def build_buy_plan(

@@ -16,6 +16,8 @@ def score_bars(
 
     active_policy = policy or StrategyPolicy()
     closes = [bar.close for bar in bars]
+    highs = [bar.high for bar in bars]
+    lows = [bar.low for bar in bars]
     volumes = [bar.volume for bar in bars]
     amounts = [bar.amount for bar in bars]
     benchmark_closes = [bar.close for bar in benchmark_bars]
@@ -29,6 +31,7 @@ def score_bars(
     benchmark_return_3d = pct_return(benchmark_closes, 3)
     stock_return_5d = pct_return(closes, 5)
     benchmark_return_5d = pct_return(benchmark_closes, 5)
+    recent_amplitude_3d = calc_recent_amplitude(highs, lows, 3)
     invalid_price = calc_invalid_price(bars)
     risk_distance = latest.close / invalid_price - 1 if invalid_price > 0 else 9.99
     distance_to_ma5 = latest.close / ma5 - 1 if ma5 > 0 else 9.99
@@ -77,11 +80,14 @@ def score_bars(
         if active_policy.horizon == "ultra_short_2_3d":
             not_overheated = stock_return_5d <= 0.08 and distance_to_ma5 <= 0.04
             short_risk_passed = risk_distance <= 0.035
+            elasticity_score = score_short_elasticity(recent_amplitude_3d, stock_return_3d, low_bar=0.015, ideal_bar=0.025)
             odds_name = "2-3日赔率"
         else:
             not_overheated = stock_return_5d <= 0.12 and distance_to_ma5 <= 0.06
             short_risk_passed = risk_distance <= 0.045
+            elasticity_score = score_short_elasticity(recent_amplitude_3d, stock_return_3d, low_bar=0.020, ideal_bar=0.035)
             odds_name = "3-5日赔率"
+        elasticity_passed = elasticity_score > 0
         scores.extend(
             [
                 FactorScore(
@@ -97,6 +103,12 @@ def score_bars(
                     f"5日涨跌 {stock_return_5d:.2%}, 距MA5 {distance_to_ma5:.2%}",
                 ),
                 FactorScore(
+                    "短线弹性",
+                    elasticity_score,
+                    elasticity_passed,
+                    f"近3日振幅 {recent_amplitude_3d:.2%}, 3日涨跌 {stock_return_3d:.2%}",
+                ),
+                FactorScore(
                     odds_name,
                     12 if short_risk_passed else (-5 if risk_distance > 0.08 else 3),
                     short_risk_passed,
@@ -106,3 +118,30 @@ def score_bars(
         )
 
     return scores
+
+
+def calc_recent_amplitude(highs: list[float], lows: list[float], window: int) -> float:
+    if not highs or not lows:
+        return 0.0
+    recent_highs = highs[-window:]
+    recent_lows = lows[-window:]
+    low = min(recent_lows)
+    if low <= 0:
+        return 0.0
+    return max(recent_highs) / low - 1
+
+
+def score_short_elasticity(
+    amplitude_3d: float,
+    return_3d: float,
+    *,
+    low_bar: float,
+    ideal_bar: float,
+) -> int:
+    if amplitude_3d < low_bar and abs(return_3d) < low_bar * 0.5:
+        return -14
+    if amplitude_3d >= ideal_bar:
+        return 12
+    if amplitude_3d >= low_bar:
+        return 4
+    return -6
