@@ -16,7 +16,11 @@ if [ -f "config/local.env" ]; then
   set +a
 fi
 
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+DEFAULT_PYTHON_BIN="python3"
+if [ -x ".venv/bin/python" ]; then
+  DEFAULT_PYTHON_BIN=".venv/bin/python"
+fi
+PYTHON_BIN="${PYTHON_BIN:-$DEFAULT_PYTHON_BIN}"
 RUN_HEALTHCHECK="${RUN_HEALTHCHECK:-true}"
 RUN_POOL_REFRESH="${RUN_POOL_REFRESH:-false}"
 RUN_TRADE_PLAN="${RUN_TRADE_PLAN:-true}"

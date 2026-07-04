@@ -25,7 +25,13 @@ if [ -n "${BEICHEN_REVIEW_DATE:-}" ]; then
   review_args=(--review-date "${BEICHEN_REVIEW_DATE}")
 fi
 
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m beichen_alpha trade-plan \
+DEFAULT_PYTHON_BIN="python3"
+if [ -x ".venv/bin/python" ]; then
+  DEFAULT_PYTHON_BIN=".venv/bin/python"
+fi
+PYTHON_BIN="${PYTHON_BIN:-$DEFAULT_PYTHON_BIN}"
+
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "$PYTHON_BIN" -m beichen_alpha trade-plan \
   --positions data/positions/current_positions.json \
   --watchlist data/watchlists/broad_target_pool_2026-07-03.txt \
   --model-scores ../daozang-alpha/data/exports/alpha_scores_latest.csv \
