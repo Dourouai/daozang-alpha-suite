@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from .akshare_source import import_akshare
+from .akshare_source import fetch_index_bars, import_akshare
 
 
 # ---------------------------------------------------------------------------
@@ -183,11 +183,13 @@ class AkshareSentimentSource:
                 futures_close = _fnum(latest, "close", "收盘价")
                 if futures_close <= 0:
                     continue
-                # Get spot close from baostock or use approximate
-                spot_close = self._get_spot_close(spot_code)
+                spot_close = self._get_spot_close(ak, spot_code)
                 if spot_close <= 0:
                     continue
                 basis = (futures_close - spot_close) / spot_close
+                if abs(basis) > 0.3:
+                    health.append(f"{fut_code}升贴水异常: futures={futures_close:.2f}, spot={spot_close:.2f}")
+                    continue
                 results.append(FuturesBasis(
                     contract=fut_code,
                     trade_date=today,
@@ -202,14 +204,22 @@ class AkshareSentimentSource:
             health.append(f"股指期货: FAIL ({e})")
         return results
 
-    def _get_spot_close(self, code: str) -> float:
-        """Get spot index close from baostock (quick fallback)."""
+    def _get_spot_close(self, ak, code: str) -> float:
+        """Get spot index close from AKShare, with BaoStock as fallback."""
+        start_date = (self.as_of.date() - timedelta(days=5)).strftime("%Y%m%d")
+        end_date = self.as_of.date().strftime("%Y%m%d")
+        try:
+            bars = fetch_index_bars(ak, code, start_date, end_date)
+            if bars:
+                return float(bars[-1].close)
+        except Exception:
+            pass
         try:
             from beichen_alpha.data_sources.baostock_source import BaostockPriceSource
             bars = BaostockPriceSource(
                 symbols=[code], benchmark="000300",
-                start_date=(self.as_of.date() - timedelta(days=5)).strftime("%Y%m%d"),
-                end_date=self.as_of.date().strftime("%Y%m%d"),
+                start_date=start_date,
+                end_date=end_date,
             ).load()
             if code in bars and bars[code]:
                 return float(bars[code][-1].close)

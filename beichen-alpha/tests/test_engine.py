@@ -25,6 +25,7 @@ from beichen_alpha.data_sources.universe_source import (
     select_spot_candidates,
 )
 from beichen_alpha.data_sources.profile_source import load_profile_csv
+from beichen_alpha.data_sources.daozang_profile_source import load_daozang_profiles
 from beichen_alpha.data_sources.market_regime_source import build_market_regime
 from beichen_alpha.data_sources.market_structure_source import build_margin_summary, build_northbound_summary
 from beichen_alpha.data_sources.macro_event_source import CsvMacroEventSource
@@ -68,10 +69,11 @@ from beichen_alpha.data_sources.sector_rotation_source import build_sector_signa
 from beichen_alpha.data_sources.sector_rotation_source import normalize_sector_name
 from beichen_alpha.distill import distill_article, opinion_signal_to_dict
 from beichen_alpha.events import classify_disclosure, classify_news
-from beichen_alpha.models import ArticleContent, Bar, GlobalIndicator, MacroEvent, MarketStructureSnapshot, NewsEvent, OpinionSignal, RealtimeQuote, Recommendation, RiskCalendarEvent, SectorSignal, StockProfile, StrategyPolicy
+from beichen_alpha.models import ArticleContent, Bar, FactorScore, GlobalIndicator, MacroEvent, MarketStructureSnapshot, NewsEvent, OpinionSignal, RealtimeQuote, Recommendation, RiskCalendarEvent, SectorSignal, StockProfile, StrategyPolicy
+from beichen_alpha.data_health import DataHealthReport, SourceCheck, format_data_health_card
 from beichen_alpha.news_sources.opinion_signal_news import OpinionSignalNewsSource, signal_to_news_event
 from beichen_alpha.notifiers import render_feishu_recommendations_card
-from beichen_alpha.reports import render_global_linkage_report
+from beichen_alpha.reports import render_global_linkage_report, render_three_day_trade_plan
 from beichen_alpha.pool_refresh import build_pool_diff, format_watchlist, read_watchlist_entries
 from beichen_alpha.profile_tags import (
     profile_all_tags,
@@ -86,6 +88,7 @@ from beichen_alpha.risk_sources.risk_calendar import (
     score_pledge_risk,
     score_release_risk,
 )
+from beichen_alpha.risk_sources.static_risk_calendar import load_static_risk_calendar
 from beichen_alpha.strategy.news_factor import score_news_events
 from beichen_alpha.strategy.realtime import build_realtime_check
 from beichen_alpha.strategy.return_calibration import calibrate_position_return
@@ -99,10 +102,16 @@ from beichen_alpha.strategy.market_structure_factor import score_market_structur
 from beichen_alpha.strategy.policy import score_policy
 from beichen_alpha.strategy.risk_calendar_factor import score_risk_calendar_events
 from beichen_alpha.strategy.factors import score_bars
-from beichen_alpha.strategy.trade_plan import build_three_day_trade_plan, infer_trade_group
+from beichen_alpha.strategy.trade_plan import (
+    ModelScoreCoverage,
+    build_three_day_trade_plan,
+    infer_trade_group,
+    inspect_model_score_coverage,
+    load_model_scores,
+)
 from beichen_alpha.data_sources.akshare_source import normalize_symbol
 from beichen_alpha.engine import rank_recommendations
-from beichen_alpha.strategy.engine import build_recommendation
+from beichen_alpha.strategy.engine import build_candidate_score, build_recommendation
 from beichen_alpha.factors import calc_invalid_price, calc_observation_zone
 
 
@@ -220,6 +229,82 @@ class EngineTest(unittest.TestCase):
         row = build_recommendation("600160", bars, benchmark, profile=profile, sector_signals=signals)
         self.assertIn("行业共振", row.candidate_breakdown)
         self.assertGreater(row.candidate_score, 0)
+
+    def test_daozang_model_score_contributes_to_candidate_score(self):
+        row = build_recommendation(
+            "600160",
+            self.price_map["600160"],
+            self.price_map["000300"],
+            model_pct_rank=0.96,
+        )
+
+        self.assertEqual(row.model_pct_rank, 0.96)
+        self.assertIn("模型分", row.candidate_breakdown)
+        self.assertIn("道藏模型", row.reason)
+
+    def test_low_daozang_model_score_penalizes_without_excluding(self):
+        row = build_recommendation(
+            "600160",
+            self.price_map["600160"],
+            self.price_map["000300"],
+            model_pct_rank=0.12,
+        )
+
+        self.assertIn("模型分-", row.candidate_breakdown)
+        self.assertIn("道藏模型", row.risk)
+        self.assertNotEqual(row.status, "排除")
+
+    def test_candidate_score_caps_factor_groups(self):
+        score, breakdown = build_candidate_score(
+            [
+                FactorScore("龙虎榜", 40, True, "机构净买"),
+                FactorScore("北向资金", 36, True, "连续买入"),
+                FactorScore("主力资金", 30, True, "主力流入"),
+            ]
+        )
+
+        self.assertEqual(score, 45)
+        self.assertIn("资金博弈+45(原+106)", breakdown)
+        self.assertIn("资金博弈封顶", breakdown)
+
+    def test_etf_money_factor_counts_as_flow_group(self):
+        score, breakdown = build_candidate_score([FactorScore("ETF资金", 12, True, "ETF流入")])
+
+        self.assertEqual(score, 12)
+        self.assertIn("资金博弈+12", breakdown)
+        self.assertNotIn("板块热度+12", breakdown)
+
+    def test_low_model_score_caps_total_score(self):
+        score, breakdown = build_candidate_score(
+            [
+                FactorScore("道藏模型", -14, False, "模型分位低"),
+                FactorScore("龙虎榜", 40, True, "机构净买"),
+                FactorScore("北向资金", 36, True, "连续买入"),
+                FactorScore("行业轮动", 48, True, "板块强"),
+                FactorScore("趋势", 55, True, "趋势强"),
+                FactorScore("流动性", 35, True, "流动性好"),
+            ]
+        )
+
+        self.assertEqual(score, 100)
+        self.assertIn("模型低分限顶100", breakdown)
+
+    def test_data_health_card_returns_card_body_only(self):
+        report = DataHealthReport(
+            as_of=datetime(2026, 7, 6, 9, 30),
+            overall_status="degraded",
+            overall_score=1,
+            checks=[SourceCheck("道藏模型分数", "stale", "日期 2026-07-03", 0)],
+            notes=["模型分数需要刷新"],
+        )
+
+        card = format_data_health_card(report)
+
+        self.assertNotIn("msg_type", card)
+        self.assertNotIn("card", card)
+        self.assertIn("header", card)
+        self.assertIn("elements", card)
+        self.assertIn("道藏模型分数", json.dumps(card, ensure_ascii=False))
 
 
 class PoolRefreshTest(unittest.TestCase):
@@ -456,6 +541,25 @@ class MarketDataSourceTest(unittest.TestCase):
         self.assertEqual(margin["buy_100m"], 1070)
         self.assertEqual(northbound["net_buy_100m"], 40)
         self.assertEqual(northbound["net_buy_5d_100m"], 95)
+
+    def test_market_structure_source_normalizes_large_margin_units(self):
+        margin = build_margin_summary(
+            [
+                {"日期": "2026-07-02", "融资融券余额": 1_000_000_000_000, "融资买入额": 50_000_000_000},
+                {"日期": "2026-07-03", "融资融券余额": 1_020_000_000_000, "融资买入额": 65_000_000_000},
+            ],
+        )
+        northbound = build_northbound_summary(
+            [
+                {"日期": "2026-07-02", "当日成交净买额": "nan"},
+                {"日期": "2026-07-03", "当日成交净买额": 40},
+            ],
+            as_of=datetime(2026, 7, 3, 15),
+        )
+
+        self.assertEqual(margin["balance_100m"], 10200)
+        self.assertEqual(margin["buy_100m"], 650)
+        self.assertEqual(northbound["net_buy_100m"], 40)
 
     def test_sector_rotation_scores_matching_profile(self):
         history_rows = [
@@ -1168,6 +1272,31 @@ class RiskCalendarFactorTest(unittest.TestCase):
         self.assertLess(score.score, 0)
         self.assertFalse(score.passed)
 
+    def test_static_risk_calendar_loads_daozang_csv(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "akshare_risk_calendar.csv"
+            path.write_text(
+                "\n".join(
+                    [
+                        "code,name,risk_tags,risk_source,risk_detail,event_date,severity,hard_exclude",
+                        "000100,TCL科技,解禁硬风险;大额解禁,东方财富限售解禁,2026-07-10 解禁;3天后,2026-07-10,1,1",
+                        "600000,浦发银行,财报临近,巨潮财报预约披露,2026半年报 预约披露,2026-08-30,0.25,0",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            events = load_static_risk_calendar(
+                path,
+                symbols=["000100", "600000"],
+                as_of=datetime(2026, 7, 7),
+                forward_days=30,
+            )
+
+        self.assertEqual(events["000100"][0].event_type, "restricted_release")
+        self.assertTrue(events["000100"][0].hard_exclude)
+        self.assertNotIn("600000", events)
+
 
 class ContentIngestTest(unittest.TestCase):
     def test_parse_wechat_html_extracts_main_content(self):
@@ -1311,6 +1440,52 @@ class ContentIngestTest(unittest.TestCase):
         self.assertIn("资源股外围回调风险", signal.risk_flags)
         self.assertTrue(any(rule.startswith("ALLOC_ETF_DIVERSIFY") for rule in signal.matched_rules))
 
+    def test_distill_article_detects_a_share_policy_factors(self):
+        article = ArticleContent(
+            title="中美股市体系差异与A股长期改革方向",
+            author="何毅财经课堂",
+            source_name="何毅财经课堂",
+            url="",
+            text=(
+                "A股是外部约束型，上涨需政策确认，承载资源配置等多重职能，"
+                "会调控降温防暴涨暴跌。未来A股改革方向是包容健康上涨，"
+                "减少临时干预，引入长期资金，转向基本面定价，对长期发展有信心。"
+            ),
+        )
+
+        signal = distill_article(article)
+
+        self.assertIn("A股政策确认", signal.themes)
+        self.assertIn("长期资金/基本面定价", signal.themes)
+        self.assertIn("市场干预风险", signal.themes)
+        self.assertIn("政策未确认风险", signal.risk_flags)
+        self.assertIn("追高降温风险", signal.risk_flags)
+        self.assertIn("A股政策确认观察", signal.stance)
+        self.assertIn("长期资金/基本面定价观察", signal.stance)
+        self.assertIn("追高降温风险", signal.stance)
+        self.assertTrue(any(rule.startswith("WATCH_A_SHARE_POLICY_CONFIRMATION") for rule in signal.matched_rules))
+
+    def test_opinion_market_wide_risk_maps_to_candidate_event(self):
+        article = ArticleContent(
+            title="中美股市体系差异与A股长期改革方向",
+            author="何毅财经课堂",
+            source_name="何毅财经课堂",
+            url="",
+            text=(
+                "A股是外部约束型，上涨需政策确认。市场会调控降温防暴涨暴跌，"
+                "也要引入长期资金，转向基本面定价。"
+            ),
+            published_at=datetime(2026, 7, 5, 20, 0, 0),
+        )
+        signal = distill_article(article)
+        profile = StockProfile(code="000963", name="华东医药", industry="医药", themes=("创新药",))
+
+        event = signal_to_news_event(signal, "000963", profile)
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event.event_type, "opinion_market_intervention_risk")
+        self.assertLess(event.polarity, 0)
+
     def test_opinion_signal_news_source_converts_theme_risk_to_event(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             article = ArticleContent(
@@ -1400,6 +1575,36 @@ class UniverseSourceTest(unittest.TestCase):
         self.assertEqual(profile_style_tags(profile), ("全球竞争",))
         self.assertIn("新材料", profile_concept_tags(profile))
         self.assertIn("工业金属", profile_all_tags(profile))
+
+    def test_daozang_profiles_merge_active_universe_and_industry_map(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            active_path = Path(tmpdir) / "active_universe.csv"
+            industry_path = Path(tmpdir) / "akshare_industry_map.csv"
+            active_path.write_text(
+                "\n".join(
+                    [
+                        "code,instrument,name,source_pool,industry,industry_source,themes,latest,turnover,market_cap_billion",
+                        "600036,SH600036,招商银行,positions,银行,akshare_ths_industry,金融稳定;高股息,36.6,3442080000,9230.46",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            industry_path.write_text(
+                "\n".join(
+                    [
+                        "code,name,industry,themes,industry_source",
+                        "600036,招商银行,银行,防御;金融稳定,akshare_ths_industry",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            profile = load_daozang_profiles(active_path, industry_path)["600036"]
+
+        self.assertEqual(profile.industry, "银行")
+        self.assertEqual(profile.market_cap_billion, 9230.46)
+        self.assertIn("高股息", profile_all_tags(profile))
+        self.assertIn("防御", profile_all_tags(profile))
 
     def test_infer_consumer_appliance_profile(self):
         profile = infer_stock_profile("000333", "美的集团")
@@ -1533,6 +1738,13 @@ class RealtimeQuoteTest(unittest.TestCase):
         self.assertAlmostEqual(quote.amount_billion, 37.61292696)
         self.assertEqual(quote.volume_hand, 1400553)
         self.assertEqual(quote.vwap_price, 26.86)
+        self.assertEqual(quote.turnover_rate, 0.57)
+        self.assertEqual(quote.pe_ratio, 18.28)
+        self.assertEqual(quote.pb_ratio, 2.89)
+        self.assertEqual(quote.limit_up_price, 29.30)
+        self.assertEqual(quote.limit_down_price, 23.98)
+        self.assertAlmostEqual(quote.float_market_cap_billion, 659.418)
+        self.assertAlmostEqual(quote.market_cap_billion, 659.418)
         self.assertEqual(quote.quote_time.strftime("%Y-%m-%d %H:%M:%S"), "2026-07-03 10:00:01")
 
     def test_realtime_check_marks_buyable_and_chasing(self):
@@ -1900,6 +2112,53 @@ class GlobalFeatureSourceTest(unittest.TestCase):
 
 
 class ThreeDayTradePlanTest(unittest.TestCase):
+    def test_load_model_scores_normalizes_instrument_codes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "alpha_scores_latest.csv"
+            path.write_text(
+                "\n".join(
+                    [
+                        "trade_date,instrument,score,rank,pct_rank,model,feature_set,horizon_days,universe",
+                        "2026-07-03,SH600938,0.1,1,0.93,lightgbm,Alpha158,5,csi300",
+                        "2026-07-03,000001.SZ,0.1,2,1.20,lightgbm,Alpha158,5,csi300",
+                        "2026-07-03,BJ430047,0.1,3,-0.10,lightgbm,Alpha158,5,csi300",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            scores = load_model_scores(path)
+
+        self.assertEqual(scores["600938"], 0.93)
+        self.assertEqual(scores["000001"], 1.0)
+        self.assertEqual(scores["430047"], 0.0)
+
+    def test_model_score_coverage_reports_missing_and_stale_scores(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "alpha_scores_latest.csv"
+            path.write_text(
+                "\n".join(
+                    [
+                        "trade_date,instrument,score,rank,pct_rank,model,feature_set,horizon_days,universe",
+                        "2026-06-26,SH600900,0.1,1,0.90,lightgbm,Alpha158,5,active_universe",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            coverage = inspect_model_score_coverage(
+                path,
+                ["600900", "000963"],
+                as_of=datetime(2026, 7, 6),
+                max_stale_days=5,
+            )
+
+        self.assertEqual(coverage.trade_date, "2026-06-26")
+        self.assertEqual(coverage.covered, 1)
+        self.assertEqual(coverage.missing, ("000963",))
+        self.assertTrue(coverage.stale)
+        self.assertIn("未覆盖 000963", coverage.detail)
+
     def test_builds_three_day_plan_with_cash_and_lot_constraints(self):
         positions = [
             {
@@ -1947,11 +2206,165 @@ class ThreeDayTradePlanTest(unittest.TestCase):
         self.assertEqual(len(plan.buy_plans), 3)
         self.assertTrue(any(item.code == "600938" and item.model_pct_rank == 0.93 for item in plan.buy_plans))
 
+    def test_trade_plan_uses_model_rank_from_recommendation_when_scores_not_passed(self):
+        recommendation = make_recommendation(
+            "600938",
+            "中国海油",
+            27.69,
+            122,
+            "条件执行",
+            model_rank=0.88,
+        )
+
+        plan = build_three_day_trade_plan([recommendation], [], capital=10000, top_n=1)
+
+        self.assertEqual(plan.buy_plans[0].model_pct_rank, 0.88)
+
+    def test_trade_plan_uses_realtime_quote_for_lot_cost_and_execution_detail(self):
+        recommendation = make_recommendation("600028", "中国石化", 30.00, 120, "条件执行")
+        quote = RealtimeQuote(
+            "600028",
+            "中国石化",
+            25.00,
+            24.80,
+            25.20,
+            24.50,
+            24.70,
+            1.21,
+            amount_billion=8.5,
+            turnover_rate=1.8,
+            pe_ratio=9.2,
+            pb_ratio=0.9,
+            market_cap_billion=500,
+            limit_up_price=27.17,
+            limit_down_price=22.23,
+            quote_time=datetime(2026, 7, 7, 10, 0),
+        )
+
+        plan = build_three_day_trade_plan(
+            [recommendation],
+            [],
+            capital=10000,
+            top_n=1,
+            realtime_quotes={"600028": quote},
+        )
+        report = render_three_day_trade_plan(plan)
+
+        self.assertEqual(plan.buy_plans[0].close, 25.00)
+        self.assertEqual(plan.buy_plans[0].lot_cost, 2500)
+        self.assertEqual(plan.buy_plans[0].price_source, "实时(tencent)")
+        self.assertIn("换手 1.80%", plan.buy_plans[0].execution_detail)
+        self.assertIn("参考价 25.00(实时", report)
+
+    def test_trade_plan_filters_candidate_when_realtime_one_lot_is_unaffordable(self):
+        recommendation = make_recommendation("300548", "长芯博创", 20.00, 120, "条件执行")
+        quote = RealtimeQuote("300548", "长芯博创", 120.00, 118, 122, 116, 118, 1.7)
+
+        plan = build_three_day_trade_plan(
+            [recommendation],
+            [],
+            capital=10000,
+            top_n=1,
+            realtime_quotes={"300548": quote},
+        )
+
+        self.assertEqual(plan.buy_plans, ())
+
+    def test_probability_prediction_is_rendered_and_affects_tie_break(self):
+        recommendations = [
+            make_recommendation("600030", "中信证券", 28.95, 120, "条件执行", up_prob=0.47, avg_return=-0.004),
+            make_recommendation("000963", "华东医药", 30.05, 120, "条件执行", up_prob=0.62, avg_return=0.018),
+        ]
+
+        plan = build_three_day_trade_plan(recommendations, [], capital=10000, top_n=1)
+        report = render_three_day_trade_plan(plan)
+
+        self.assertEqual(plan.buy_plans[0].code, "000963")
+        self.assertEqual(plan.buy_plans[0].prediction_up_prob, 0.62)
+        self.assertIn("概率预测", report)
+        self.assertIn("未来3日上涨 62%", report)
+        self.assertIn("期望收益 +1.80%", report)
+
+    def test_trade_plan_can_exclude_energy_from_new_positions(self):
+        recommendations = [
+            make_recommendation("600938", "中国海油", 27.69, 180, "条件执行", model_rank=0.93),
+            make_recommendation("600028", "中国石化", 4.70, 170, "条件执行"),
+            make_recommendation("000963", "华东医药", 30.05, 118, "条件执行"),
+            make_recommendation("600030", "中信证券", 28.95, 120, "观察"),
+        ]
+
+        plan = build_three_day_trade_plan(
+            recommendations,
+            [],
+            capital=10000,
+            top_n=3,
+            excluded_groups=("能源",),
+        )
+
+        buy_codes = [item.code for item in plan.buy_plans]
+        self.assertNotIn("600938", buy_codes)
+        self.assertNotIn("600028", buy_codes)
+        self.assertIn("000963", buy_codes)
+        self.assertTrue(any("新增持仓暂不纳入: 能源" in note for note in plan.notes))
+
+    def test_trade_plan_prefers_medical_candidates_when_scores_are_close(self):
+        recommendations = [
+            make_recommendation("000963", "华东医药", 30.05, 118, "条件执行"),
+            make_recommendation("600030", "中信证券", 28.95, 125, "条件执行"),
+        ]
+
+        plan = build_three_day_trade_plan(
+            recommendations,
+            [],
+            capital=10000,
+            top_n=1,
+            preferred_groups=("医药",),
+        )
+
+        self.assertEqual(plan.buy_plans[0].code, "000963")
+        self.assertTrue(any("新增持仓优先观察: 医药" in note for note in plan.notes))
+
+    def test_preferred_group_does_not_force_negative_expectancy_candidate(self):
+        recommendations = [
+            make_recommendation("000963", "华东医药", 30.05, 118, "条件执行", up_prob=0.40, avg_return=-0.012),
+            make_recommendation("600030", "中信证券", 28.95, 125, "条件执行", up_prob=0.58, avg_return=0.010),
+        ]
+
+        plan = build_three_day_trade_plan(
+            recommendations,
+            [],
+            capital=10000,
+            top_n=1,
+            preferred_groups=("医药",),
+        )
+
+        self.assertEqual(plan.buy_plans[0].code, "600030")
+
+    def test_trade_plan_reserves_one_slot_for_preferred_group_when_available(self):
+        recommendations = [
+            make_recommendation("600900", "长江电力", 27.05, 162, "条件执行"),
+            make_recommendation("600030", "中信证券", 28.95, 152, "观察"),
+            make_recommendation("002415", "海康威视", 34.00, 142, "观察"),
+            make_recommendation("000963", "华东医药", 30.05, 91, "条件执行"),
+        ]
+
+        plan = build_three_day_trade_plan(
+            recommendations,
+            [],
+            capital=10000,
+            top_n=3,
+            preferred_groups=("医药",),
+        )
+
+        self.assertIn("000963", [item.code for item in plan.buy_plans])
+
     def test_infer_trade_group(self):
         self.assertEqual(infer_trade_group("招商银行"), "银行")
         self.assertEqual(infer_trade_group("华能水电"), "公用事业")
         self.assertEqual(infer_trade_group("中国海油"), "能源")
         self.assertEqual(infer_trade_group("中信证券"), "非银金融")
+        self.assertEqual(infer_trade_group("中国太保"), "非银金融")
+        self.assertEqual(infer_trade_group("君实生物-U"), "医药")
 
     def test_holding_with_low_elasticity_releases_capital(self):
         positions = [
@@ -2068,6 +2481,91 @@ class ThreeDayTradePlanTest(unittest.TestCase):
         self.assertEqual(plan.holding_plans[0].holding_trade_days, 3)
         self.assertIn("优先减仓或退出", plan.holding_plans[0].trigger)
 
+    def test_low_model_holding_below_confirm_escalates_to_reduce(self):
+        positions = [
+            {
+                "code": "600036",
+                "name": "招商银行",
+                "shares": 100,
+                "entry_date": "2026-07-03",
+                "cost": 36.89,
+                "confirm": 36.80,
+                "invalid": 35.28,
+                "target": 39.23,
+            }
+        ]
+        recommendation = Recommendation(
+            code="600036",
+            name="招商银行",
+            score=90,
+            status="条件执行",
+            close=36.60,
+            observation_zone="36.50-36.90",
+            confirm_price=36.80,
+            invalid_price=35.28,
+            reason="测试",
+            risk="-",
+            candidate_score=90,
+            take_profit_price=39.23,
+            model_pct_rank=0.12,
+        )
+
+        plan = build_three_day_trade_plan(
+            [recommendation],
+            positions,
+            capital=10000,
+            top_n=0,
+            model_scores={"600036": 0.12},
+        )
+
+        self.assertEqual(plan.holding_plans[0].action, "减仓优先")
+        self.assertEqual(plan.holding_plans[0].model_pct_rank, 0.12)
+        self.assertIn("模型分低于30%", plan.holding_plans[0].trigger)
+        self.assertGreater(plan.rotation_cash, plan.available_cash)
+
+    def test_weak_candidate_pool_pauses_new_buys(self):
+        recommendations = [
+            make_recommendation("600030", "中信证券", 28.95, 152, "失效"),
+            make_recommendation("600900", "长江电力", 27.05, 148, "失效"),
+            make_recommendation("601857", "中国石油", 9.05, 132, "排除"),
+            make_recommendation("600025", "华能水电", 9.20, 118, "等待"),
+            make_recommendation("002415", "海康威视", 34.00, 110, "观察"),
+            make_recommendation("000963", "华东医药", 30.05, 108, "观察"),
+        ]
+
+        plan = build_three_day_trade_plan(recommendations, [], capital=10000, top_n=3)
+
+        self.assertEqual(plan.risk_posture, "暂停新增")
+        self.assertEqual(plan.rotation_cash, 0)
+        self.assertEqual(plan.buy_plans, ())
+        self.assertAlmostEqual(plan.candidate_failure_ratio, 0.5)
+        self.assertTrue(any("暂停新增买入" in note for note in plan.notes))
+
+    def test_stale_model_scores_reduce_new_buy_budget(self):
+        coverage = ModelScoreCoverage(
+            path="alpha_scores_latest.csv",
+            exists=True,
+            trade_date="2026-07-03",
+            rows=800,
+            covered=1,
+            missing=(),
+            stale=True,
+            detail="道藏模型分数: 日期 2026-07-03，需要刷新。",
+        )
+
+        plan = build_three_day_trade_plan(
+            [make_recommendation("000963", "华东医药", 30.05, 118, "条件执行")],
+            [],
+            capital=10000,
+            top_n=1,
+            model_coverage=coverage,
+        )
+
+        self.assertEqual(plan.risk_posture, "谨慎")
+        self.assertAlmostEqual(plan.rotation_cash, 6000)
+        self.assertAlmostEqual(plan.new_buy_budget_scale, 0.6)
+        self.assertTrue(any("模型分偏旧" in note for note in plan.notes))
+
 
 class DecisionLogTest(unittest.TestCase):
     def test_recommendation_decision_records_roundtrip(self):
@@ -2108,7 +2606,7 @@ class DecisionLogTest(unittest.TestCase):
         ]
         recommendations = [
             make_recommendation("600036", "招商银行", 36.83, 113, "条件执行"),
-            make_recommendation("600028", "中国石化", 4.70, 115, "条件执行"),
+            make_recommendation("600028", "中国石化", 4.70, 115, "条件执行", up_prob=0.58, avg_return=0.012),
         ]
         plan = build_three_day_trade_plan(
             recommendations,
@@ -2130,6 +2628,10 @@ class DecisionLogTest(unittest.TestCase):
         self.assertEqual(kinds, {"holding_review", "trade_plan_buy"})
         self.assertEqual(buy["code"], "600028")
         self.assertEqual(buy["scores"]["model_pct_rank"], 0.61)
+        self.assertTrue(buy["scores"]["prediction"]["available"])
+        self.assertEqual(buy["scores"]["prediction"]["up_probability"], 0.58)
+        self.assertIn("execution", buy)
+        self.assertIn("execution_score", buy["execution"])
         self.assertEqual(buy["portfolio"]["available_cash"], plan.available_cash)
         holding = next(record for record in records if record["decision_kind"] == "holding_review")
         self.assertEqual(holding["sizing"]["entry_date"], "2026-07-03")
@@ -2234,7 +2736,26 @@ class ChatAdapterTest(unittest.TestCase):
 
     def test_chat_router_summarizes_latest_trade_plan(self):
         recommendation = make_recommendation("000963", "华东医药", 30.05, 92, "条件执行")
-        plan = build_three_day_trade_plan([recommendation], [], capital=10000, top_n=1)
+        positions = [
+            {
+                "code": "600036",
+                "name": "招商银行",
+                "shares": 100,
+                "entry_date": "2026-07-03",
+                "cost": 36.89,
+                "confirm": 36.80,
+                "invalid": 35.28,
+                "target": 39.23,
+            }
+        ]
+        plan = build_three_day_trade_plan(
+            [recommendation],
+            positions,
+            capital=10000,
+            top_n=1,
+            review_date=datetime(2026, 7, 6),
+            trading_dates=["2026-07-03", "2026-07-06"],
+        )
         records = build_trade_plan_decision_records(
             plan,
             as_of=datetime(2026, 7, 3, 23, 59, 59),
@@ -2248,8 +2769,52 @@ class ChatAdapterTest(unittest.TestCase):
             response = handle_chat_message(ChatMessage("最新计划"), project_dir=root)
 
         self.assertEqual(response.intent, "trade_plan")
+        self.assertIn("账户状态", response.text)
+        self.assertIn("已有持仓处理", response.text)
+        self.assertIn("招商银行", response.text)
+        self.assertIn("新增候选和触发价", response.text)
         self.assertIn("华东医药", response.text)
         self.assertIn("确认", response.text)
+        self.assertIn("模型未覆盖", response.text)
+        self.assertIn("周一执行顺序", response.text)
+
+    def test_chat_router_uses_latest_logged_at_when_trade_plan_run_id_repeats(self):
+        context = {"command": "trade_plan"}
+        as_of = datetime(2026, 7, 3, 23, 59, 59)
+        old_plan = build_three_day_trade_plan(
+            [make_recommendation("000963", "华东医药", 30.05, 92, "条件执行")],
+            [],
+            capital=10000,
+            top_n=1,
+        )
+        new_plan = build_three_day_trade_plan(
+            [make_recommendation("600900", "长江电力", 27.05, 156, "条件执行")],
+            [],
+            capital=10000,
+            top_n=1,
+        )
+        old_records = build_trade_plan_decision_records(
+            old_plan,
+            as_of=as_of,
+            context=context,
+            logged_at=datetime(2026, 7, 5, 10, 0, 0),
+        )
+        new_records = build_trade_plan_decision_records(
+            new_plan,
+            as_of=as_of,
+            context=context,
+            logged_at=datetime(2026, 7, 5, 11, 0, 0),
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            path = root / "data/decision_logs/recommendations.jsonl"
+            append_decision_records(old_records, path)
+            append_decision_records(new_records, path)
+            response = handle_chat_message(ChatMessage("最新计划"), project_dir=root)
+
+        self.assertIn("长江电力", response.text)
+        self.assertNotIn("华东医药", response.text)
 
     def test_feishu_event_adapter_handles_challenge(self):
         adapter = FeishuEventAdapter(webhook_sender=lambda text: {"code": 0})
@@ -2273,25 +2838,27 @@ class ChatAdapterTest(unittest.TestCase):
 
     def test_feishu_event_adapter_replies_to_text_message(self):
         sent: list[str] = []
-        adapter = FeishuEventAdapter(
-            verify_token="token",
-            webhook_sender=lambda text: sent.append(text) or {"code": 0},
-            allow_webhook_fallback=True,
-        )
-        result = adapter.handle_event(
-            {
-                "header": {"token": "token"},
-                "event": {
-                    "sender": {"sender_id": {"open_id": "ou_test"}},
-                    "message": {
-                        "message_id": "om_test",
-                        "chat_id": "oc_test",
-                        "message_type": "text",
-                        "content": json.dumps({"text": "帮助"}, ensure_ascii=False),
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter = FeishuEventAdapter(
+                project_dir=tmpdir,
+                verify_token="token",
+                webhook_sender=lambda text: sent.append(text) or {"code": 0},
+                allow_webhook_fallback=True,
+            )
+            result = adapter.handle_event(
+                {
+                    "header": {"token": "token"},
+                    "event": {
+                        "sender": {"sender_id": {"open_id": "ou_test"}},
+                        "message": {
+                            "message_id": "om_test",
+                            "chat_id": "oc_test",
+                            "message_type": "text",
+                            "content": json.dumps({"text": "帮助"}, ensure_ascii=False),
+                        },
                     },
-                },
-            }
-        )
+                }
+            )
 
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.response.intent, "help")
@@ -2330,8 +2897,9 @@ def make_recommendation(
     score: int,
     status: str,
     model_rank: float | None = None,
+    up_prob: float | None = None,
+    avg_return: float | None = None,
 ) -> Recommendation:
-    _ = model_rank
     return Recommendation(
         code=code,
         name=name,
@@ -2345,6 +2913,15 @@ def make_recommendation(
         risk="-",
         candidate_score=score,
         take_profit_price=round(close * 1.06, 2),
+        model_pct_rank=model_rank,
+        calibration_up_prob=up_prob,
+        calibration_avg_return=avg_return,
+        calibration_target_hit_prob=0.34 if up_prob is not None else None,
+        calibration_stop_hit_prob=0.18 if up_prob is not None else None,
+        calibration_median_return=avg_return,
+        calibration_confidence="中" if up_prob is not None else "",
+        calibration_sample_count=80 if up_prob is not None else 0,
+        calibration_detail="历史校准：测试样本",
     )
 
 

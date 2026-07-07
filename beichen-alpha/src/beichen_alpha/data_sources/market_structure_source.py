@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import date, datetime
 
 from beichen_alpha.models import MarketStructureSnapshot
@@ -71,8 +72,8 @@ def build_margin_summary(*record_groups: list[dict]) -> dict[str, float | None]:
         rows = []
         for record in records:
             record_date = parse_date(record.get("日期"))
-            balance = to_optional_float(record.get("融资融券余额"))
-            buy = to_optional_float(record.get("融资买入额"))
+            balance = normalize_amount_100m(to_optional_float(record.get("融资融券余额")))
+            buy = normalize_amount_100m(to_optional_float(record.get("融资买入额")))
             if record_date is None or balance is None:
                 continue
             rows.append((record_date, balance, buy or 0.0))
@@ -189,9 +190,21 @@ def to_optional_float(value) -> float | None:
     if value is None or value == "" or value == "-":
         return None
     try:
-        return float(str(value).replace("%", "").replace(",", "").strip())
+        number = float(str(value).replace("%", "").replace(",", "").strip())
     except (TypeError, ValueError):
         return None
+    return number if math.isfinite(number) else None
+
+
+def normalize_amount_100m(value: float | None) -> float | None:
+    if value is None:
+        return None
+    magnitude = abs(value)
+    if magnitude >= 1_000_000_000:
+        return value / 100_000_000
+    if magnitude >= 100_000:
+        return value / 10_000
+    return value
 
 
 def calc_change_pct(latest: float | None, previous: float | None) -> float | None:
