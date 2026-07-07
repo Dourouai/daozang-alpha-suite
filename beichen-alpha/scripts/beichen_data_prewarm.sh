@@ -63,6 +63,7 @@ RUN_FACTORS="${BEICHEN_PREWARM_FACTORS:-true}"
 FACTOR_TIMEOUT_SECONDS="${BEICHEN_PREWARM_FACTOR_TIMEOUT_SECONDS:-240}"
 FACTOR_LIMIT="${BEICHEN_PREWARM_FACTOR_LIMIT:-80}"
 FACTOR_STATUS_JSON="${BEICHEN_PREWARM_FACTOR_STATUS_JSON:-data/runtime/latest_factor_prewarm.json}"
+QLIB_FALLBACK="${BEICHEN_PREWARM_QLIB_FALLBACK:-true}"
 
 extra_args=()
 if [ "$SOURCE" = "qlib" ]; then
@@ -98,6 +99,38 @@ run_with_timeout "$TIMEOUT_SECONDS" env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src
   >"$tmp_output" 2>"$tmp_error"
 exit_code=$?
 set -e
+
+if [ "$exit_code" -ne 0 ] && [ "$SOURCE" = "qlib" ] && [ "$QLIB_FALLBACK" = "true" ]; then
+  first_error_tail="$(tail -n 20 "$tmp_error" 2>/dev/null | tr '\n' ' ' | sed 's/"/\\"/g')"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARN qlib prewarm failed; fallback to baostock error=$first_error_tail" >&2
+  rm -f "$tmp_output" "$tmp_error"
+  tmp_output="$(mktemp data/runtime/latest_trade_plan.XXXXXX.tmp)"
+  tmp_error="$(mktemp data/runtime/latest_trade_plan.XXXXXX.err)"
+  SOURCE="baostock"
+  extra_args=(--source baostock)
+  if [ "$FULL_FACTORS" != "true" ]; then
+    extra_args+=(
+      --disable-flow-factor
+      --disable-global-linkage
+      --disable-sentiment
+      --disable-advanced
+    )
+  fi
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] START data-prewarm fallback source=$SOURCE watchlist=$WATCHLIST"
+  set +e
+  run_with_timeout "$TIMEOUT_SECONDS" env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "$PYTHON_BIN" -m beichen_alpha trade-plan \
+    --positions "$POSITIONS" \
+    --watchlist "$WATCHLIST" \
+    --model-scores "$MODEL_SCORES" \
+    --capital "$CAPITAL" \
+    --top "$TOP" \
+    --decision-log data/decision_logs/recommendations.jsonl \
+    --notify none \
+    "${extra_args[@]}" \
+    >"$tmp_output" 2>"$tmp_error"
+  exit_code=$?
+  set -e
+fi
 
 finished_at="$(date '+%Y-%m-%d %H:%M:%S')"
 if [ "$exit_code" -eq 0 ]; then
