@@ -140,9 +140,9 @@ class AkshareSentimentSource:
                         code = _norm(_cell(row, "标的证券代码"))
                         if code not in target:
                             continue
-                        mb = _fnum(row, "融资余额")
-                        buy = _fnum(row, "融资买入额")
-                        repay = _fnum(row, "融资偿还额")
+                        mb = _yuan_to_10k(_fnum(row, "融资余额"))
+                        buy = _yuan_to_10k(_fnum(row, "融资买入额"))
+                        repay = _yuan_to_10k(_fnum(row, "融资偿还额"))
                         result.setdefault(code, []).append(MarginRecord(
                             code=code,
                             name=str(_cell(row, "标的证券简称", "")),
@@ -260,6 +260,9 @@ def _fnum(row, *keys):
         return float(v)
     except (ValueError, TypeError):
         return 0.0
+
+def _yuan_to_10k(value: float) -> float:
+    return value / 10000 if value else 0.0
 
 def _quiet(func, *args, **kwargs):
     try:
