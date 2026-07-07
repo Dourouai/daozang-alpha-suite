@@ -677,7 +677,7 @@ def prewarm_factors_main(argv: list[str]) -> int:
         default=os.environ.get("BEICHEN_POSITIONS", "data/positions/current_positions.json"),
         help="current positions JSON path; holdings are always included",
     )
-    parser.add_argument("--limit", type=int, default=int(os.environ.get("BEICHEN_PREWARM_FACTOR_LIMIT", "80")), help="max non-position symbols")
+    parser.add_argument("--limit", type=int, default=int(os.environ.get("BEICHEN_PREWARM_FACTOR_LIMIT", "40")), help="max non-position symbols")
     parser.add_argument("--as-of", default="", help="reference date/time, YYYYMMDD or ISO; default now")
     parser.add_argument("--disable-flow", action="store_true", help="skip flow snapshot")
     parser.add_argument("--disable-global", action="store_true", help="skip global linkage snapshot")
