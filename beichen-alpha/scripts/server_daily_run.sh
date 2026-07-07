@@ -33,10 +33,13 @@ RUN_POOL_REFRESH="${RUN_POOL_REFRESH:-false}"
 RUN_TRADE_PLAN="${RUN_TRADE_PLAN:-true}"
 RUN_FOCUS_CHECK="${RUN_FOCUS_CHECK:-false}"
 BEICHEN_BROAD_WATCHLIST="${BEICHEN_BROAD_WATCHLIST:-data/watchlists/broad_target_pool_latest.txt}"
+BEICHEN_TRADE_WATCHLIST="${BEICHEN_TRADE_WATCHLIST:-$BEICHEN_BROAD_WATCHLIST}"
 BEICHEN_FEISHU_CHANNEL_MODE="${BEICHEN_FEISHU_CHANNEL_MODE:-trade_decisions}"
 BEICHEN_FEISHU_SEND_POOL_REFRESH="${BEICHEN_FEISHU_SEND_POOL_REFRESH:-false}"
 BEICHEN_FEISHU_SEND_FOCUS_CHECK="${BEICHEN_FEISHU_SEND_FOCUS_CHECK:-true}"
 DAOZANG_UNIVERSE_LIMIT="${DAOZANG_UNIVERSE_LIMIT:-800}"
+BEICHEN_BROAD_POOL_SIZE="${BEICHEN_BROAD_POOL_SIZE:-$DAOZANG_UNIVERSE_LIMIT}"
+BEICHEN_BROAD_SCAN_LIMIT="${BEICHEN_BROAD_SCAN_LIMIT:-$DAOZANG_UNIVERSE_LIMIT}"
 DAOZANG_BASELINE_QUICK="${DAOZANG_BASELINE_QUICK:-true}"
 DAOZANG_NUM_BOOST_ROUND="${DAOZANG_NUM_BOOST_ROUND:-80}"
 DAOZANG_EARLY_STOPPING_ROUNDS="${DAOZANG_EARLY_STOPPING_ROUNDS:-10}"
@@ -215,8 +218,8 @@ fi
 
 if [ "$RUN_POOL_REFRESH" = "true" ]; then
   run_step "daily-refresh-pool" env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "$PYTHON_BIN" -m beichen_alpha daily-refresh-pool \
-    --pool-size 50 \
-    --scan-limit 120 \
+    --pool-size "$BEICHEN_BROAD_POOL_SIZE" \
+    --scan-limit "$BEICHEN_BROAD_SCAN_LIMIT" \
     --profile config/profile_overrides.csv \
     --cycle balanced \
     --horizon ultra_short_2_3d \
@@ -233,7 +236,7 @@ if [ "$RUN_TRADE_PLAN" = "true" ]; then
   fi
   run_step "trade-plan" env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "$PYTHON_BIN" -m beichen_alpha trade-plan \
     --positions data/positions/current_positions.json \
-    --watchlist "$BEICHEN_BROAD_WATCHLIST" \
+    --watchlist "$BEICHEN_TRADE_WATCHLIST" \
     --model-scores ../daozang-alpha/data/exports/alpha_scores_latest.csv \
     --capital "${BEICHEN_CAPITAL:-10000}" \
     --top "${BEICHEN_TRADE_TOP:-3}" \
