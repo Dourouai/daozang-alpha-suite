@@ -7,5 +7,13 @@ After=network-online.target
 Type=oneshot
 WorkingDirectory=/www/wwwroot/daozang-alpha-suite/beichen-alpha
 Environment=PYTHON_BIN=/www/wwwroot/daozang-alpha-suite/beichen-alpha/.venv/bin/python
+Environment=OMP_NUM_THREADS=1
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=MKL_NUM_THREADS=1
+Environment=NUMEXPR_NUM_THREADS=1
 ExecStart=/www/wwwroot/daozang-alpha-suite/beichen-alpha/scripts/beichen_data_prewarm.sh
-Nice=5
+Nice=10
+CPUQuota=40%
+MemoryMax=900M
+TasksMax=64
+IOWeight=50
