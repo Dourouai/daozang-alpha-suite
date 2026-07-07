@@ -16,7 +16,7 @@ if [ -f "config/local.env" ]; then
 fi
 
 notify_args=()
-if [ -n "${FEISHU_WEBHOOK:-}" ]; then
+if [ -n "${FEISHU_WEBHOOK:-}" ] && [ "${BEICHEN_FEISHU_CHANNEL_MODE:-trade_decisions}" != "off" ]; then
   notify_args=(--notify feishu)
 fi
 
@@ -30,10 +30,11 @@ if [ -x ".venv/bin/python" ]; then
   DEFAULT_PYTHON_BIN=".venv/bin/python"
 fi
 PYTHON_BIN="${PYTHON_BIN:-$DEFAULT_PYTHON_BIN}"
+BEICHEN_BROAD_WATCHLIST="${BEICHEN_BROAD_WATCHLIST:-data/watchlists/broad_target_pool_latest.txt}"
 
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "$PYTHON_BIN" -m beichen_alpha trade-plan \
   --positions data/positions/current_positions.json \
-  --watchlist data/watchlists/broad_target_pool_2026-07-03.txt \
+  --watchlist "$BEICHEN_BROAD_WATCHLIST" \
   --model-scores ../daozang-alpha/data/exports/alpha_scores_latest.csv \
   --capital 10000 \
   --top 3 \
