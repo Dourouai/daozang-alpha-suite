@@ -74,8 +74,8 @@
 ## 导出格式草案
 
 ```csv
-trade_date,instrument,score,rank,pct_rank,model,feature_set,horizon_days,universe
-2026-07-03,SH600000,0.0231,1,0.998,lightgbm,Alpha158,5,csi300
+trade_date,instrument,score,rank,pct_rank,model,feature_set,horizon_days,universe,score_1d,score_3d,score_5d,pct_rank_1d,pct_rank_3d,pct_rank_5d,expected_return_3d,up_probability_3d
+2026-07-06,SH600000,0.0231,1,0.998,lightgbm,Alpha158,3,active_universe,0.0120,0.0231,0.0188,0.910,0.998,0.945,0.0065,0.61
 ```
 
 后续可以追加：
@@ -123,6 +123,25 @@ universe
 - 实时行情确认。
 - 观察区、确认价、失效线、追高线。
 
+第二阶段增加反向特征桥：
+
+```text
+beichen-alpha/data/decision_logs/recommendations.jsonl
+  -> daozang-alpha export-beichen-features
+  -> daozang-alpha/data/features/beichen_daily_features_latest.csv
+  -> daozang-alpha run-baseline --extra-features data/features/beichen_daily_features_latest.csv
+```
+
+第一版日频特征包含：
+
+- 政策因子：`beichen_policy_score`、`beichen_policy_keyword_score`。
+- 资金流因子：`beichen_flow_score`、龙虎榜、北向、主力资金子分。
+- 公告风险因子：`beichen_disclosure_score`、`beichen_disclosure_hard_risk`。
+- 板块生命周期因子：`beichen_sector_lifecycle_score`、生命周期状态。
+- 预期透支因子：`beichen_expectation_score`、预期状态。
+
+这些特征来自北辰已经结构化过的因子和决策日志，不直接使用新闻或公告原文。
+
 ## 全球联动边界
 
 `daozang-alpha` 主攻 A 股量化研究，但后续不能只看 A 股本地数据。
@@ -166,8 +185,8 @@ universe
 - `daozang-alpha roadmap`
 - `daozang-alpha smoke-test-data`
 - `daozang-alpha run-baseline`
+- `daozang-alpha export-scores`
 
 下一步增加：
 
 - `daozang-alpha backtest`
-- `daozang-alpha export-scores`

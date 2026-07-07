@@ -26,6 +26,7 @@ RUN_DAOZANG_SYNC_INDUSTRY_MAP="${RUN_DAOZANG_SYNC_INDUSTRY_MAP:-true}"
 RUN_DAOZANG_SYNC_RISK_CALENDAR="${RUN_DAOZANG_SYNC_RISK_CALENDAR:-true}"
 RUN_DAOZANG_SYNC_UNIVERSE="${RUN_DAOZANG_SYNC_UNIVERSE:-true}"
 RUN_DAOZANG_SYNC_QLIB_BARS="${RUN_DAOZANG_SYNC_QLIB_BARS:-true}"
+RUN_DAOZANG_EXPORT_BEICHEN_FEATURES="${RUN_DAOZANG_EXPORT_BEICHEN_FEATURES:-true}"
 RUN_DAOZANG_BASELINE="${RUN_DAOZANG_BASELINE:-auto}"
 RUN_DAOZANG_EXPORT_SCORES="${RUN_DAOZANG_EXPORT_SCORES:-true}"
 RUN_POOL_REFRESH="${RUN_POOL_REFRESH:-false}"
@@ -41,6 +42,7 @@ DAOZANG_NUM_BOOST_ROUND="${DAOZANG_NUM_BOOST_ROUND:-80}"
 DAOZANG_EARLY_STOPPING_ROUNDS="${DAOZANG_EARLY_STOPPING_ROUNDS:-10}"
 DAOZANG_QLIB_SYNC_WORKERS="${DAOZANG_QLIB_SYNC_WORKERS:-8}"
 DAOZANG_QLIB_SYNC_TIMEOUT="${DAOZANG_QLIB_SYNC_TIMEOUT:-4}"
+DAOZANG_BEICHEN_FEATURES_PATH="${DAOZANG_BEICHEN_FEATURES_PATH:-data/features/beichen_daily_features_latest.csv}"
 
 trade_notify_args=()
 pool_notify_args=()
@@ -158,12 +160,25 @@ if [ "$RUN_DAOZANG_SYNC_QLIB_BARS" = "true" ]; then
   fi
 fi
 
+if [ "$RUN_DAOZANG_EXPORT_BEICHEN_FEATURES" = "true" ]; then
+  if [ -d "$DAOZANG_DIR" ]; then
+    run_optional_step_in_dir "daozang-export-beichen-features" "$DAOZANG_DIR" env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "$DAOZANG_PYTHON_BIN" -m daozang_alpha export-beichen-features \
+      --beichen-root "$PROJECT_DIR" \
+      --output "$DAOZANG_BEICHEN_FEATURES_PATH"
+  else
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARN daozang-alpha directory missing; continue without Beichen daily features"
+  fi
+fi
+
 if [ "$RUN_DAOZANG_BASELINE" != "false" ]; then
   if [ -d "$DAOZANG_DIR" ]; then
     if [ "$RUN_DAOZANG_BASELINE" = "true" ] || python_has_daozang_research_deps; then
       daozang_baseline_args=()
       if [ "$DAOZANG_BASELINE_QUICK" = "true" ]; then
         daozang_baseline_args+=(--quick)
+      fi
+      if [ -f "$DAOZANG_DIR/$DAOZANG_BEICHEN_FEATURES_PATH" ]; then
+        daozang_baseline_args+=(--extra-features "$DAOZANG_BEICHEN_FEATURES_PATH")
       fi
       run_optional_step_in_dir "daozang-run-baseline" "$DAOZANG_DIR" env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "$DAOZANG_PYTHON_BIN" -m daozang_alpha run-baseline \
         "${daozang_baseline_args[@]}" \

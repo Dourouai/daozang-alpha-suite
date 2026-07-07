@@ -7,6 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from beichen_alpha.models import Recommendation, RealtimeCheck
+from beichen_alpha.strategy.final_action import decide_recommendation_action
+from beichen_alpha.strategy.playbook import (
+    classify_buy_plan_strategy,
+    classify_holding_strategy,
+    classify_recommendation_strategy,
+)
 from beichen_alpha.strategy.trade_plan import BuyPlan, HoldingPlan, ThreeDayTradePlan
 
 
@@ -120,6 +126,7 @@ def recommendation_to_record(
     realtime_check: RealtimeCheck | None,
     logged_at: str,
 ) -> dict[str, Any]:
+    final = decide_recommendation_action(item, realtime_check)
     record = base_record(
         run_id=run_id,
         run_kind=run_kind,
@@ -151,6 +158,8 @@ def recommendation_to_record(
                 "score": item.score,
                 "candidate_score": item.candidate_score or item.score,
                 "macro_event_score": item.macro_event_score,
+                "model_pct_rank": item.model_pct_rank,
+                "prediction": recommendation_prediction_to_dict(item),
             },
             "rationale": {
                 "reason": item.reason,
@@ -160,6 +169,13 @@ def recommendation_to_record(
                 "sector_rotation": item.sector_rotation,
                 "risk_calendar": item.risk_calendar,
                 "sell_plan": item.sell_plan,
+            },
+            "factor_scores": [factor_score_to_dict(score) for score in item.factor_scores],
+            "strategy_profile": classify_recommendation_strategy(item, realtime_check),
+            "final_action": {
+                "action": final.action,
+                "confidence": final.confidence,
+                "reason": final.reason,
             },
             "risk": {
                 "risk_text": item.risk,
@@ -172,6 +188,25 @@ def recommendation_to_record(
     if realtime_check is not None:
         record["execution"] = realtime_check_to_dict(realtime_check)
     return record
+
+
+def factor_score_to_dict(item: Any) -> dict[str, Any]:
+    return {
+        "name": getattr(item, "name", ""),
+        "score": getattr(item, "score", 0),
+        "passed": bool(getattr(item, "passed", True)),
+        "detail": getattr(item, "detail", ""),
+        "group": factor_group_name(getattr(item, "name", "")),
+    }
+
+
+def factor_group_name(name: str) -> str:
+    try:
+        from beichen_alpha.strategy.engine import CANDIDATE_FACTOR_GROUPS
+
+        return CANDIDATE_FACTOR_GROUPS.get(name, "")
+    except Exception:
+        return ""
 
 
 def holding_plan_to_record(
@@ -201,6 +236,7 @@ def holding_plan_to_record(
         {
             "prices": {
                 "current": item.price,
+                "source": item.price_source,
                 "cost": item.cost,
                 "confirm": item.confirm,
                 "stop": item.stop,
@@ -214,9 +250,22 @@ def holding_plan_to_record(
                 "entry_date": item.entry_date,
                 "holding_trade_days": item.holding_trade_days,
             },
+            "scores": {
+                "model_pct_rank": item.model_pct_rank,
+                "prediction": plan_prediction_to_dict(item),
+                "execution_score": item.execution_score,
+            },
             "portfolio": portfolio_context(plan),
             "rationale": {
                 "trigger": item.trigger,
+                "execution_detail": item.execution_detail,
+            },
+            "execution": plan_execution_to_dict(item),
+            "strategy_profile": classify_holding_strategy(item),
+            "final_action": {
+                "action": item.final_action,
+                "confidence": item.action_confidence,
+                "reason": item.action_reason,
             },
             "risk": {
                 "stop": item.stop,
@@ -256,6 +305,7 @@ def buy_plan_to_record(
             "group": item.group,
             "prices": {
                 "close": item.close,
+                "source": item.price_source,
                 "confirm": item.confirm,
                 "stop": item.stop,
                 "target": item.target,
@@ -264,6 +314,8 @@ def buy_plan_to_record(
             "scores": {
                 "candidate_score": item.candidate_score,
                 "model_pct_rank": item.model_pct_rank,
+                "prediction": plan_prediction_to_dict(item),
+                "execution_score": item.execution_score,
             },
             "sizing": {
                 "lot_cost": item.lot_cost,
@@ -272,6 +324,14 @@ def buy_plan_to_record(
             "portfolio": portfolio_context(plan),
             "rationale": {
                 "trigger": item.trigger,
+                "execution_detail": item.execution_detail,
+            },
+            "execution": plan_execution_to_dict(item),
+            "strategy_profile": classify_buy_plan_strategy(item),
+            "final_action": {
+                "action": item.final_action,
+                "confidence": item.action_confidence,
+                "reason": item.action_reason,
             },
             "risk": {
                 "stop": item.stop,
@@ -281,6 +341,50 @@ def buy_plan_to_record(
         }
     )
     return record
+
+
+def recommendation_prediction_to_dict(item: Recommendation) -> dict[str, Any]:
+    if item.calibration_up_prob is None:
+        return {"available": False, "reason": "样本不足"}
+    return {
+        "available": True,
+        "horizon_days": 3,
+        "up_probability": item.calibration_up_prob,
+        "avg_return": item.calibration_avg_return,
+        "median_return": item.calibration_median_return,
+        "target_hit_probability": item.calibration_target_hit_prob,
+        "stop_hit_probability": item.calibration_stop_hit_prob,
+        "confidence": item.calibration_confidence,
+        "sample_count": item.calibration_sample_count,
+        "source": "same_stock_historical_shape",
+        "detail": item.calibration_detail,
+    }
+
+
+def plan_prediction_to_dict(item: HoldingPlan | BuyPlan) -> dict[str, Any]:
+    if item.prediction_up_prob is None:
+        return {"available": False, "reason": "样本不足"}
+    return {
+        "available": True,
+        "horizon_days": 3,
+        "up_probability": item.prediction_up_prob,
+        "avg_return": item.prediction_avg_return,
+        "median_return": item.prediction_median_return,
+        "target_hit_probability": item.prediction_target_hit_prob,
+        "stop_hit_probability": item.prediction_stop_hit_prob,
+        "confidence": item.prediction_confidence,
+        "sample_count": item.prediction_sample_count,
+        "source": "same_stock_historical_shape",
+        "detail": item.prediction_detail,
+    }
+
+
+def plan_execution_to_dict(item: HoldingPlan | BuyPlan) -> dict[str, Any]:
+    return {
+        "price_source": item.price_source,
+        "execution_score": item.execution_score,
+        "detail": item.execution_detail,
+    }
 
 
 def base_record(
@@ -344,5 +448,20 @@ def portfolio_context(plan: ThreeDayTradePlan) -> dict[str, Any]:
         "invested_cost": plan.invested_cost,
         "available_cash": plan.available_cash,
         "rotation_cash": plan.rotation_cash,
+        "risk_posture": {
+            "label": plan.risk_posture,
+            "new_buy_budget_scale": plan.new_buy_budget_scale,
+            "candidate_failure_ratio": plan.candidate_failure_ratio,
+            "candidate_executable_count": plan.candidate_executable_count,
+            "candidate_failed_count": plan.candidate_failed_count,
+        },
+        "model_scores": {
+            "trade_date": plan.model_score_trade_date,
+            "rows": plan.model_score_rows,
+            "covered": plan.model_score_covered,
+            "missing": list(plan.model_score_missing),
+            "stale": plan.model_score_stale,
+            "detail": plan.model_score_note,
+        },
         "notes": list(plan.notes),
     }

@@ -210,6 +210,17 @@ class Recommendation:
     candidate_breakdown: str = ""
     macro_event_score: int = 0
     macro_events: str = ""
+    model_pct_rank: float | None = None
+    # Return calibration fields (wired from return_calibration.py)
+    calibration_up_prob: float | None = None  # historically-calibrated win probability
+    calibration_avg_return: float | None = None  # historically-calibrated avg forward return
+    calibration_target_hit_prob: float | None = None
+    calibration_stop_hit_prob: float | None = None
+    calibration_median_return: float | None = None
+    calibration_confidence: str = ""  # "高" / "中" / "低" / "" (not calibrated)
+    calibration_sample_count: int = 0  # number of historical samples used
+    calibration_detail: str = ""  # human-readable calibration summary
+    factor_scores: tuple[FactorScore, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -225,6 +236,14 @@ class RealtimeQuote:
     amount_billion: float | None = None
     volume_hand: float | None = None
     vwap_price: float | None = None
+    turnover_rate: float | None = None
+    pe_ratio: float | None = None
+    pb_ratio: float | None = None
+    market_cap_billion: float | None = None
+    float_market_cap_billion: float | None = None
+    limit_up_price: float | None = None
+    limit_down_price: float | None = None
+    amplitude_pct: float | None = None
     quote_time: datetime | None = None
     source: str = "tencent"
     latency_ms: float | None = None
