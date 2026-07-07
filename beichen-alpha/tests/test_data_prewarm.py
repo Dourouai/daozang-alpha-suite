@@ -28,6 +28,25 @@ class DataPrewarmTest(unittest.TestCase):
         self.assertIn(",2", text)
         self.assertNotIn(",1", text)
 
+    def test_upsert_csv_rows_merges_existing_columns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "combined.csv"
+            upsert_csv_rows(
+                path,
+                [{"date": "2026-07-07", "code": "600036", "flow": 1}],
+                ("date", "code"),
+            )
+            upsert_csv_rows(
+                path,
+                [{"date": "2026-07-07", "code": "600036", "sentiment": 2}],
+                ("date", "code"),
+            )
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("flow", text)
+        self.assertIn("sentiment", text)
+        self.assertIn(",1,", text)
+        self.assertIn(",2", text)
+
     def test_combine_factor_rows_adds_global_columns(self):
         rows = combine_factor_rows(
             [{"date": "2026-07-07", "code": "600036", "flow_main_net_inflow_10k": 10}],

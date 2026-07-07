@@ -66,8 +66,14 @@ TIMEOUT_SECONDS="${BEICHEN_PREWARM_TIMEOUT_SECONDS:-240}"
 FULL_FACTORS="${BEICHEN_PREWARM_FULL_FACTORS:-false}"
 RUN_FACTORS="${BEICHEN_PREWARM_FACTORS:-true}"
 FACTOR_TIMEOUT_SECONDS="${BEICHEN_PREWARM_FACTOR_TIMEOUT_SECONDS:-240}"
+GLOBAL_FACTOR_TIMEOUT_SECONDS="${BEICHEN_PREWARM_GLOBAL_FACTOR_TIMEOUT_SECONDS:-90}"
+FLOW_FACTOR_TIMEOUT_SECONDS="${BEICHEN_PREWARM_FLOW_FACTOR_TIMEOUT_SECONDS:-180}"
+SENTIMENT_FACTOR_TIMEOUT_SECONDS="${BEICHEN_PREWARM_SENTIMENT_FACTOR_TIMEOUT_SECONDS:-180}"
 FACTOR_LIMIT="${BEICHEN_PREWARM_FACTOR_LIMIT:-12}"
 FACTOR_STATUS_JSON="${BEICHEN_PREWARM_FACTOR_STATUS_JSON:-data/runtime/latest_factor_prewarm.json}"
+GLOBAL_FACTOR_STATUS_JSON="${BEICHEN_PREWARM_GLOBAL_FACTOR_STATUS_JSON:-data/runtime/latest_factor_prewarm_global.json}"
+FLOW_FACTOR_STATUS_JSON="${BEICHEN_PREWARM_FLOW_FACTOR_STATUS_JSON:-data/runtime/latest_factor_prewarm_flow.json}"
+SENTIMENT_FACTOR_STATUS_JSON="${BEICHEN_PREWARM_SENTIMENT_FACTOR_STATUS_JSON:-data/runtime/latest_factor_prewarm_sentiment.json}"
 QLIB_FALLBACK="${BEICHEN_PREWARM_QLIB_FALLBACK:-true}"
 
 extra_args=()
@@ -152,22 +158,71 @@ fi
 
 factor_status="skipped"
 factor_exit_code=0
-if [ "$RUN_FACTORS" = "true" ]; then
-  factor_started_at="$(date '+%Y-%m-%d %H:%M:%S')"
-  echo "[$factor_started_at] START factor-prewarm watchlist=$WATCHLIST limit=$FACTOR_LIMIT"
+factor_results=()
+run_factor_source() {
+  local name="$1"
+  local timeout_seconds="$2"
+  local status_path="$3"
+  shift 3
+  local source_started_at
+  source_started_at="$(date '+%Y-%m-%d %H:%M:%S')"
+  echo "[$source_started_at] START factor-prewarm/$name watchlist=$WATCHLIST limit=$FACTOR_LIMIT"
   set +e
-  run_with_timeout "$FACTOR_TIMEOUT_SECONDS" env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "$PYTHON_BIN" -m beichen_alpha prewarm-factors \
+  run_with_timeout "$timeout_seconds" env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "$PYTHON_BIN" -m beichen_alpha prewarm-factors \
     --positions "$POSITIONS" \
     --watchlist "$WATCHLIST" \
     --limit "$FACTOR_LIMIT" \
-    --status-json "$FACTOR_STATUS_JSON"
-  factor_exit_code=$?
+    --status-json "$status_path" \
+    "$@"
+  local source_exit_code=$?
   set -e
+  if [ "$source_exit_code" -eq 0 ]; then
+    factor_results+=("$name:ok:$source_exit_code:$status_path")
+  else
+    factor_results+=("$name:failed:$source_exit_code:$status_path")
+    if [ "$factor_exit_code" -eq 0 ]; then
+      factor_exit_code="$source_exit_code"
+    fi
+  fi
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] DONE factor-prewarm/$name exit=$source_exit_code"
+}
+
+if [ "$RUN_FACTORS" = "true" ]; then
+  run_factor_source "global" "$GLOBAL_FACTOR_TIMEOUT_SECONDS" "$GLOBAL_FACTOR_STATUS_JSON" --disable-flow --disable-sentiment
+  run_factor_source "flow" "$FLOW_FACTOR_TIMEOUT_SECONDS" "$FLOW_FACTOR_STATUS_JSON" --disable-global --disable-sentiment
+  run_factor_source "sentiment" "$SENTIMENT_FACTOR_TIMEOUT_SECONDS" "$SENTIMENT_FACTOR_STATUS_JSON" --disable-flow --disable-global
   if [ "$factor_exit_code" -eq 0 ]; then
     factor_status="ok"
   else
-    factor_status="failed"
+    factor_status="partial"
   fi
+  "$PYTHON_BIN" - "$FACTOR_STATUS_JSON" "$factor_status" "$factor_exit_code" "${factor_results[@]}" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+sources = []
+for raw in sys.argv[4:]:
+    name, status, exit_code, status_json = raw.split(":", 3)
+    sources.append(
+        {
+            "name": name,
+            "status": status,
+            "exit_code": int(exit_code),
+            "status_json": status_json,
+        }
+    )
+payload = {
+    "status": sys.argv[2],
+    "exit_code": int(sys.argv[3]),
+    "sources": sources,
+}
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] DONE factor-prewarm status=$factor_status exit=$factor_exit_code"
 fi
 

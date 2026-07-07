@@ -215,13 +215,22 @@ def combine_factor_rows(
 def upsert_csv_rows(path: str | Path, rows: list[dict[str, Any]], key_fields: tuple[str, ...]) -> Path:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    existing: list[dict[str, Any]] = []
+    merged_by_key: dict[tuple[str, ...], dict[str, Any]] = {}
+    key_order: list[tuple[str, ...]] = []
     if output.exists():
         with output.open("r", newline="", encoding="utf-8") as file:
-            existing = list(csv.DictReader(file))
-    incoming_keys = {row_key(row, key_fields) for row in rows}
-    merged = [row for row in existing if row_key(row, key_fields) not in incoming_keys]
-    merged.extend(rows)
+            for row in csv.DictReader(file):
+                key = row_key(row, key_fields)
+                if key not in merged_by_key:
+                    key_order.append(key)
+                merged_by_key[key] = row
+    for row in rows:
+        key = row_key(row, key_fields)
+        if key not in merged_by_key:
+            key_order.append(key)
+            merged_by_key[key] = {}
+        merged_by_key[key] = {**merged_by_key[key], **row}
+    merged = [merged_by_key[key] for key in key_order]
     columns = sorted({key for row in merged for key in row.keys()})
     columns = ordered_columns(columns)
     with output.open("w", newline="", encoding="utf-8") as file:
