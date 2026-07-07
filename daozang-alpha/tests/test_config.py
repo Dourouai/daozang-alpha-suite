@@ -20,6 +20,11 @@ region = "cn"
 
 [dataset]
 label_horizon_days = 10
+
+[model]
+objective = "lambdarank"
+multi_label = true
+ensemble = ["xgb", "catboost"]
 """.strip(),
                 encoding="utf-8",
             )
@@ -29,6 +34,9 @@ label_horizon_days = 10
         self.assertEqual(config.qlib.provider_uri, "~/custom/cn_data")
         self.assertEqual(config.qlib.region, "cn")
         self.assertEqual(config.dataset.label_horizon_days, 10)
+        self.assertEqual(config.model.objective, "lambdarank")
+        self.assertTrue(config.model.multi_label)
+        self.assertEqual(config.model.ensemble, ("xgb", "catboost"))
 
     def test_env_provider_uri_overrides_file(self) -> None:
         old_value = os.environ.get(ENV_PROVIDER_URI)

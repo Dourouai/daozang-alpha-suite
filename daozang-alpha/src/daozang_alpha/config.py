@@ -46,12 +46,15 @@ class SegmentsConfig:
 @dataclass(frozen=True)
 class ModelConfig:
     name: str = "lightgbm"
-    feature_set: str = "Alpha158"
+    feature_set: str = "Alpha158"       # Alpha158 | Alpha360
+    objective: str = "regression"       # regression | lambdarank
     num_boost_round: int = 200
     early_stopping_rounds: int = 20
     learning_rate: float = 0.05
     num_leaves: int = 64
     max_depth: int = 8
+    multi_label: bool = True           # Train 1d/3d/5d labels simultaneously
+    ensemble: tuple[str, ...] = ()      # e.g. ("xgb", "catboost") for multi-model
 
 
 @dataclass(frozen=True)
@@ -120,11 +123,14 @@ def load_config(path: str | Path | None = None) -> DaozangConfig:
     model_config = ModelConfig(
         name=str(model_raw.get("name", "lightgbm")),
         feature_set=str(model_raw.get("feature_set", "Alpha158")),
+        objective=str(model_raw.get("objective", "regression")),
         num_boost_round=int(model_raw.get("num_boost_round", 200)),
         early_stopping_rounds=int(model_raw.get("early_stopping_rounds", 20)),
         learning_rate=float(model_raw.get("learning_rate", 0.05)),
         num_leaves=int(model_raw.get("num_leaves", 64)),
         max_depth=int(model_raw.get("max_depth", 8)),
+        multi_label=_load_bool(model_raw.get("multi_label", True)),
+        ensemble=_load_string_tuple(model_raw.get("ensemble", ())),
     )
     export_config = ExportConfig(
         top_n=int(export_raw.get("top_n", 50)),
@@ -151,3 +157,19 @@ def _load_segment(
         start=str(raw.get("start", default_start)),
         end=str(raw.get("end", default_end)),
     )
+
+
+def _load_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _load_string_tuple(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        raw_items = value.split(",")
+    else:
+        raw_items = value
+    return tuple(str(item).strip() for item in raw_items if str(item).strip())

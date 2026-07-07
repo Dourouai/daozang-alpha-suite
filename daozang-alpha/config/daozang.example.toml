@@ -24,11 +24,14 @@ end = "2026-06-30"
 [model]
 name = "lightgbm"
 feature_set = "Alpha158"
+objective = "regression"
 num_boost_round = 200
 early_stopping_rounds = 20
 learning_rate = 0.05
 num_leaves = 64
 max_depth = 8
+multi_label = true
+ensemble = []
 
 [export]
 top_n = 50
