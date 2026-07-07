@@ -197,6 +197,7 @@ def score_realtime_execution(
         parts.append(("板块同步", score_sector_sync(sector_confirmation)))
         parts.append(("宏观同步", score_macro_execution(recommendation.macro_event_score)))
         parts.append(("追高惩罚", score_chase_penalty(quote.price, recommendation.confirm_price, chase_limit_price)))
+        parts.extend(score_execution_facts(quote))
 
     parts.append(("周五T+1", -8 if friday_mode else 0))
     total = max(min(sum(score for _, score in parts), 100), -100)
@@ -255,6 +256,69 @@ def score_chase_penalty(price: float, confirm_price: float, chase_limit_price: f
         return -30
     if confirm_price > 0 and price / confirm_price - 1 > 0.015:
         return -6
+    return 0
+
+
+def score_execution_facts(quote: RealtimeQuote) -> list[tuple[str, int]]:
+    return [
+        ("涨跌停距离", score_limit_distance(quote)),
+        ("换手活跃", score_turnover_rate(quote.turnover_rate)),
+        ("成交流动性", score_quote_amount(quote.amount_billion)),
+        ("市值承载", score_market_cap(quote.market_cap_billion)),
+    ]
+
+
+def score_limit_distance(quote: RealtimeQuote) -> int:
+    if quote.price <= 0:
+        return 0
+    if quote.limit_up_price and quote.limit_up_price > 0:
+        up_gap = quote.limit_up_price / quote.price - 1
+        if up_gap <= 0.003:
+            return -12
+        if up_gap <= 0.015:
+            return -6
+    if quote.limit_down_price and quote.limit_down_price > 0:
+        down_gap = quote.price / quote.limit_down_price - 1
+        if down_gap <= 0.003:
+            return -18
+        if down_gap <= 0.015:
+            return -8
+    return 0
+
+
+def score_turnover_rate(turnover_rate: float | None) -> int:
+    if turnover_rate is None:
+        return 0
+    if turnover_rate < 0.3:
+        return -4
+    if turnover_rate <= 8:
+        return 4
+    if turnover_rate <= 18:
+        return 0
+    return -5
+
+
+def score_quote_amount(amount_100m: float | None) -> int:
+    if amount_100m is None:
+        return 0
+    if amount_100m >= 20:
+        return 5
+    if amount_100m >= 5:
+        return 3
+    if amount_100m >= 1:
+        return 1
+    return -3
+
+
+def score_market_cap(market_cap_billion: float | None) -> int:
+    if market_cap_billion is None:
+        return 0
+    if market_cap_billion >= 300:
+        return 3
+    if market_cap_billion >= 80:
+        return 1
+    if market_cap_billion < 30:
+        return -4
     return 0
 
 

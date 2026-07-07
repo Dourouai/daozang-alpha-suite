@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .content_sources import ManualTextSource, WechatArticleSource
+from .data_health import check_data_health, format_data_health_card, format_data_health_text
 from .data_sources import (
     AksharePriceSource,
     AkshareMarketRegimeSource,
@@ -17,6 +18,7 @@ from .data_sources import (
     BaostockPriceSource,
     CsvMacroEventSource,
     CsvPriceSource,
+    QlibBinPriceSource,
     DefaultMarketDataRouter,
     GlobalFeatureSource,
     GlobalLinkageSource,
@@ -27,6 +29,7 @@ from .data_sources import (
     build_sector_signals_from_price_map,
     fetch_universe_rows_and_profiles,
     fetch_tencent_profiles,
+    load_daozang_profiles,
     load_profile_csv,
     infer_stock_profile,
     merge_profiles,
@@ -35,6 +38,11 @@ from .data_sources import (
     save_universe_cache,
     write_global_feature_dataset,
 )
+from .data_sources.flow_source import AkshareFlowSource
+from .data_sources.sentiment_source import AkshareSentimentSource
+from .data_sources.advanced_source import AkshareAdvancedSource
+from .data_sources.heat_source import AkshareHeatSource
+from .strategy.bond_factor import load_bond_map, load_etf_scale_map
 from .decision_log import (
     DEFAULT_DECISION_LOG_PATH,
     append_decision_records,
@@ -47,6 +55,7 @@ from .models import OpinionSignal
 from .models import StrategyPolicy
 from .news_sources import AkshareNewsSource, OpinionSignalNewsSource
 from .notifiers import render_feishu_recommendations, render_feishu_recommendations_card, send_card, send_text
+from .outcome_backfill import backfill_decision_log
 from .pool_refresh import (
     build_pool_diff,
     find_previous_pool,
@@ -57,8 +66,25 @@ from .pool_refresh import (
     write_watchlist,
 )
 from .reports import render_global_linkage_report, render_table, render_three_day_trade_plan
-from .risk_sources import AkshareRiskCalendarSource, disclosure_events_to_risk_calendar, merge_risk_event_maps
-from .strategy import build_realtime_checks, build_three_day_trade_plan, load_model_scores, load_positions, rank_recommendations
+from .risk_sources import (
+    AkshareRiskCalendarSource,
+    disclosure_events_to_risk_calendar,
+    load_static_risk_calendar,
+    merge_risk_event_maps,
+)
+from .strategy_performance import (
+    read_jsonl_records,
+    render_strategy_performance_report,
+    summarize_strategy_performance,
+)
+from .strategy import (
+    build_realtime_checks,
+    build_three_day_trade_plan,
+    inspect_model_score_coverage,
+    load_model_scores,
+    load_positions,
+    rank_recommendations,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -79,6 +105,12 @@ def main(argv: list[str] | None = None) -> int:
         return healthcheck_main(argv[1:])
     if argv and argv[0] == "chat-server":
         return chat_server_main(argv[1:])
+    if argv and argv[0] == "backfill-outcomes":
+        return backfill_outcomes_main(argv[1:])
+    if argv and argv[0] == "strategy-performance":
+        return strategy_performance_main(argv[1:])
+    if argv and argv[0] == "data-health":
+        return data_health_main(argv[1:])
 
     parser = argparse.ArgumentParser(description="Beichen Alpha candidate pool runner")
     parser.add_argument("--source", choices=["akshare", "baostock", "csv"], default="akshare", help="data source")
@@ -96,6 +128,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--refresh-universe-cache", action="store_true", help="ignore and rebuild universe cache")
     parser.add_argument("--benchmark", default="000300", help="benchmark index code")
     parser.add_argument("--profile", default="", help="optional stock profile override CSV path")
+    parser.add_argument(
+        "--daozang-active-universe",
+        default="../daozang-alpha/data/universe/active_universe.csv",
+        help="Daozang active universe profile CSV",
+    )
+    parser.add_argument(
+        "--daozang-industry-map",
+        default="../daozang-alpha/data/universe/akshare_industry_map.csv",
+        help="Daozang AKShare industry map CSV",
+    )
+    parser.add_argument("--disable-daozang-profiles", action="store_true", help="skip Daozang profile CSVs")
     parser.add_argument(
         "--cycle",
         choices=["balanced", "defensive", "recovery", "growth", "inflation"],
@@ -120,6 +163,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--disable-disclosures", action="store_true", help="disable CNINFO disclosure risk factor")
     parser.add_argument("--disclosure-lookback-days", type=int, default=60, help="CNINFO disclosure lookback window")
     parser.add_argument("--disable-risk-calendar", action="store_true", help="disable risk calendar factor")
+    parser.add_argument(
+        "--static-risk-calendar",
+        default="../daozang-alpha/data/universe/akshare_risk_calendar.csv",
+        help="prebuilt Daozang risk calendar CSV",
+    )
+    parser.add_argument("--disable-static-risk-calendar", action="store_true", help="skip prebuilt Daozang risk calendar CSV")
     parser.add_argument("--risk-forward-days", type=int, default=30, help="future risk calendar window")
     parser.add_argument("--disable-pledge-risk", action="store_true", help="skip pledge risk checks in risk calendar")
     parser.add_argument("--disable-news", action="store_true", help="disable AKShare stock news source")
@@ -141,13 +190,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stats-macro-lookback-days", type=int, default=45, help="NBS macro surprise lookback window")
     parser.add_argument("--disable-sector-rotation", action="store_true", help="disable sector rotation factor")
     parser.add_argument("--disable-market-structure", action="store_true", help="disable market structure factor")
+    parser.add_argument("--disable-flow-factor", action="store_true", help="disable flow-based factors (龙虎榜/北向/主力资金)")
+    parser.add_argument("--flow-lhb-lookback", type=int, default=5, help="龙虎榜 lookback days")
+    parser.add_argument("--flow-northbound-lookback", type=int, default=5, help="北向资金 lookback days")
+    parser.add_argument("--flow-fund-lookback", type=int, default=3, help="主力资金 lookback days")
+    parser.add_argument("--disable-global-linkage", action="store_true", help="disable global linkage factor (美股映射)")
+    parser.add_argument("--disable-sentiment", action="store_true", help="disable sentiment/leverage factors (涨停板/融资融券/期货)")
+    parser.add_argument("--disable-advanced", action="store_true", help="disable advanced factors (股东增减持)")
     parser.add_argument("--sector-limit", type=int, default=40, help="max industry boards checked for rotation")
     parser.add_argument("--disable-opinions", action="store_true", help="disable personal opinion news source")
     parser.add_argument("--opinion-lookback-days", type=int, default=7, help="personal opinion signal lookback window")
+    parser.add_argument("--opinion-as-of", default="", help="personal opinion signal cutoff time; default is now")
     parser.add_argument(
         "--opinion-signals",
         default="data/opinion_signals.jsonl",
         help="personal opinion signal JSONL path",
+    )
+    parser.add_argument("--disable-model-scores", action="store_true", help="disable Daozang model score factor")
+    parser.add_argument(
+        "--model-scores",
+        default="../daozang-alpha/data/exports/alpha_scores_latest.csv",
+        help="Daozang latest score CSV",
     )
     parser.add_argument("--start", default=None, help="start date, YYYYMMDD; default is roughly 240 days ago")
     parser.add_argument("--end", default=None, help="end date, YYYYMMDD; default is today")
@@ -186,7 +249,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         log_step(args, "加载股票画像和动态股票池...")
-        profile_overrides = load_profiles(args.profile)
+        daozang_profiles = load_cli_daozang_profiles(args)
+        manual_profiles = load_profiles(args.profile)
+        profile_overrides = merge_profiles(daozang_profiles, manual_profiles)
+        if daozang_profiles:
+            log_step(args, f"道藏画像: {len(daozang_profiles)} 条")
         symbols, universe_profiles = resolve_universe(args, profile_overrides)
         log_step(args, f"入围股票 {len(symbols)} 只，开始加载行情...")
         price_map = load_price_map(args, parser, symbols)
@@ -206,6 +273,7 @@ def main(argv: list[str] | None = None) -> int:
             horizon=args.horizon,
         )
         as_of = parse_as_of(args.end)
+        opinion_as_of = resolve_opinion_as_of(args.opinion_as_of, as_of)
         stock_symbols = [code for code in price_map if code != args.benchmark]
         if args.disable_macro_events:
             log_step(args, "已跳过宏观事件源。")
@@ -287,6 +355,16 @@ def main(argv: list[str] | None = None) -> int:
             risk_calendar_events = {}
         else:
             log_step(args, "加载风险日历源...")
+            static_calendar_events = (
+                {}
+                if args.disable_static_risk_calendar
+                else load_static_risk_calendar(
+                    args.static_risk_calendar,
+                    symbols=stock_symbols,
+                    as_of=as_of,
+                    forward_days=args.risk_forward_days,
+                )
+            )
             calendar_events = AkshareRiskCalendarSource(
                 symbols=stock_symbols,
                 as_of=as_of,
@@ -296,7 +374,7 @@ def main(argv: list[str] | None = None) -> int:
             disclosure_calendar_events = (
                 {} if args.disable_disclosures else disclosure_events_to_risk_calendar(disclosure_events)
             )
-            risk_calendar_events = merge_risk_event_maps(calendar_events, disclosure_calendar_events)
+            risk_calendar_events = merge_risk_event_maps(static_calendar_events, calendar_events, disclosure_calendar_events)
             risk_count = sum(len(events) for events in risk_calendar_events.values())
             log_step(args, f"风险日历事件: {risk_count} 个")
         if args.disable_news:
@@ -316,10 +394,59 @@ def main(argv: list[str] | None = None) -> int:
             symbols=stock_symbols,
             profiles=profiles,
             path=args.opinion_signals,
-            as_of=as_of,
+            as_of=opinion_as_of,
             lookback_days=args.opinion_lookback_days,
         ).load()
         news_events = merge_event_maps(news_events, opinion_events)
+        if args.disable_model_scores:
+            log_step(args, "已跳过道藏模型分数。")
+            model_scores = {}
+        else:
+            model_scores = load_model_scores(args.model_scores)
+            log_step(args, f"道藏模型分数: {len(model_scores)} 条")
+        if args.disable_flow_factor:
+            log_step(args, "已跳过资金面因子。")
+            flow_snapshot = None
+        else:
+            log_step(args, "加载资金面数据（龙虎榜/北向/主力资金）...")
+            flow_snapshot = AkshareFlowSource(
+                symbols=stock_symbols,
+                as_of=as_of,
+                lhb_lookback_days=args.flow_lhb_lookback,
+                northbound_lookback_days=args.flow_northbound_lookback,
+                fund_flow_lookback_days=args.flow_fund_lookback,
+            ).load()
+            log_step(args, f"资金面: {', '.join(flow_snapshot.source_health) if flow_snapshot.source_health else '无数据'}")
+        if args.disable_global_linkage:
+            log_step(args, "已跳过全球联动因子。")
+            global_linkage_snapshot = None
+        else:
+            log_step(args, "加载全球联动数据（美股/汇率/商品）...")
+            global_linkage_snapshot = GlobalLinkageSource().load()
+            log_step(args, f"全球联动: 姿态{global_linkage_snapshot.posture}, 得分{global_linkage_snapshot.score}")
+        if args.disable_sentiment:
+            sentiment_snapshot = None
+        else:
+            log_step(args, "加载情绪/杠杆数据...")
+            sentiment_snapshot = AkshareSentimentSource(symbols=stock_symbols, as_of=as_of).load()
+            log_step(args, f"情绪杠杆: {', '.join(sentiment_snapshot.source_health)}")
+        if args.disable_advanced:
+            advanced_snapshot = None
+        else:
+            log_step(args, "加载高级数据...")
+            advanced_snapshot = AkshareAdvancedSource(symbols=stock_symbols, as_of=as_of).load()
+            log_step(args, f"高级数据: {', '.join(advanced_snapshot.source_health)}")
+        if args.disable_advanced:
+            bond_map = {}
+            etf_scale_map = {}
+            heat_snapshot = None
+        else:
+            # Load bond & ETF data with advanced/heat sources; these endpoints can be slow.
+            bond_map = load_bond_map()
+            etf_scale_map = load_etf_scale_map()
+            log_step(args, "加载板块热度数据（ETF资金流/概念/大宗）...")
+            heat_snapshot = AkshareHeatSource(symbols=stock_symbols, as_of=as_of).load()
+            log_step(args, f"板块热度: {', '.join(heat_snapshot.source_health)}")
         log_step(args, "计算短线候选和T+1处理计划...")
         recommendations = rank_recommendations(
             price_map,
@@ -333,6 +460,14 @@ def main(argv: list[str] | None = None) -> int:
             market_regime=market_regime,
             market_structure=market_structure,
             sector_signals=sector_signals,
+            model_scores=model_scores,
+            flow_snapshot=flow_snapshot,
+            global_linkage_snapshot=global_linkage_snapshot,
+            sentiment_snapshot=sentiment_snapshot,
+            advanced_snapshot=advanced_snapshot,
+            bond_map=bond_map,
+            etf_scale_map=etf_scale_map,
+            heat_snapshot=heat_snapshot,
             as_of=as_of,
         )
     except Exception as exc:
@@ -526,7 +661,11 @@ def healthcheck_main(argv: list[str]) -> int:
         default=int(os.environ.get("BEICHEN_MIN_POSITIONS", "1")),
         help="minimum expected local position count",
     )
-    parser.add_argument("--watchlist", default="data/watchlists/broad_target_pool_2026-07-03.txt", help="candidate watchlist path")
+    parser.add_argument(
+        "--watchlist",
+        default=os.environ.get("BEICHEN_BROAD_WATCHLIST", "data/watchlists/broad_target_pool_latest.txt"),
+        help="candidate watchlist path",
+    )
     parser.add_argument("--model-scores", default="../daozang-alpha/data/exports/alpha_scores_latest.csv", help="Daozang score CSV")
     parser.add_argument("--decision-log", default=str(DEFAULT_DECISION_LOG_PATH), help="local JSONL decision log path")
     parser.add_argument("--runtime-dir", default="data/runtime", help="runtime state directory")
@@ -543,8 +682,18 @@ def healthcheck_main(argv: list[str]) -> int:
     if positions_path.exists():
         count, detail = summarize_positions_file(positions_path)
         add_check(checks, "positions_count", count >= args.min_positions, detail, "error")
-    add_check(checks, "watchlist", Path(args.watchlist).exists(), args.watchlist, "error")
+    watchlist_path = Path(args.watchlist)
+    add_check(checks, "watchlist", watchlist_path.exists(), args.watchlist, "error")
     add_check(checks, "model_scores", Path(args.model_scores).exists(), args.model_scores, "warning")
+    if watchlist_path.exists() and Path(args.model_scores).exists():
+        coverage = inspect_model_score_coverage(args.model_scores, read_watchlist(args.watchlist))
+        add_check(
+            checks,
+            "model_score_coverage",
+            bool(not coverage.missing and not coverage.stale),
+            coverage.detail,
+            "warning",
+        )
     add_writable_dir_check(checks, Path(args.decision_log).parent, "decision_log_dir")
     add_writable_dir_check(checks, Path(args.runtime_dir), "runtime_dir")
     add_writable_dir_check(checks, Path(args.log_dir), "log_dir")
@@ -594,6 +743,120 @@ def chat_server_main(argv: list[str]) -> int:
     return 0
 
 
+def backfill_outcomes_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="Backfill forward-return outcomes for decision log records")
+    parser.add_argument("--log", default=str(DEFAULT_DECISION_LOG_PATH), help="decision log JSONL path")
+    parser.add_argument("--out", default="", help="output path; default appends .backfilled.jsonl suffix")
+    parser.add_argument("--start-date", default="", help="only process records on/after YYYY-MM-DD")
+    parser.add_argument("--end-date", default="", help="only process records on/before YYYY-MM-DD")
+    parser.add_argument("--horizons", default="1,3,5,10", help="comma-separated forward horizons in trading days")
+    parser.add_argument("--quiet", action="store_true", help="suppress progress messages")
+    args = parser.parse_args(argv)
+
+    try:
+        horizons = tuple(int(h.strip()) for h in args.horizons.split(",") if h.strip())
+        summary = backfill_decision_log(
+            log_path=args.log,
+            output_path=args.out or None,
+            start_date=args.start_date or None,
+            end_date=args.end_date or None,
+            horizons=horizons,
+            quiet=args.quiet,
+        )
+    except Exception as exc:
+        print(f"Error: backfill failed ({type(exc).__name__}): {exc}", file=sys.stderr)
+        return 2
+
+    import json as _json
+    print(_json.dumps(summary, ensure_ascii=False, indent=2, default=str))
+    return 0 if summary.get("total_records", 0) > 0 else 1
+
+
+def strategy_performance_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="Summarize strategy attribution from backfilled decision logs")
+    parser.add_argument("--log", default="", help="decision log JSONL path; defaults to backfilled log when present")
+    parser.add_argument("--horizons", default="1,3,5", help="comma-separated forward horizons in trading days")
+    parser.add_argument("--min-samples", type=int, default=1, help="minimum samples for a bucket to be displayed")
+    parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    args = parser.parse_args(argv)
+
+    try:
+        horizons = tuple(int(item.strip()) for item in args.horizons.split(",") if item.strip())
+        log_path = resolve_strategy_performance_log(args.log)
+        records = read_jsonl_records(log_path)
+        summary = summarize_strategy_performance(
+            records,
+            horizons=horizons,
+            min_samples=args.min_samples,
+        )
+        summary["log_path"] = str(log_path)
+    except Exception as exc:
+        print(f"Error: strategy-performance failed ({type(exc).__name__}): {exc}", file=sys.stderr)
+        return 2
+
+    if args.json:
+        import json as _json
+        print(_json.dumps(summary, ensure_ascii=False, indent=2, default=str))
+    else:
+        print(render_strategy_performance_report(summary))
+        print(f"Log path: {log_path}")
+    return 0 if summary.get("records_with_outcome", 0) > 0 else 1
+
+
+def resolve_strategy_performance_log(value: str) -> Path:
+    if value:
+        return Path(value)
+    backfilled = DEFAULT_DECISION_LOG_PATH.with_suffix(".backfilled.jsonl")
+    if backfilled.exists():
+        return backfilled
+    return DEFAULT_DECISION_LOG_PATH
+
+
+def data_health_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="Check data health before generating trade plans")
+    parser.add_argument("--positions", default="data/positions/current_positions.json", help="current positions JSON path")
+    parser.add_argument("--decision-log", default=str(DEFAULT_DECISION_LOG_PATH), help="local JSONL decision log path")
+    parser.add_argument("--model-scores", default="../daozang-alpha/data/exports/alpha_scores_latest.csv", help="Daozang score CSV")
+    parser.add_argument("--active-universe", default="../daozang-alpha/data/universe/active_universe.csv", help="active universe CSV")
+    parser.add_argument("--risk-calendar", default="../daozang-alpha/data/universe/akshare_risk_calendar.csv", help="risk calendar CSV")
+    parser.add_argument("--industry-map", default="../daozang-alpha/data/universe/akshare_industry_map.csv", help="industry map CSV")
+    parser.add_argument("--max-model-score-age", type=int, default=2, help="max acceptable model score age in days")
+    parser.add_argument("--notify", choices=["none", "feishu"], default="none", help="send health report to Feishu")
+    parser.add_argument("--notify-title", default="北辰 Alpha 数据健康", help="Feishu notification title")
+    parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    args = parser.parse_args(argv)
+
+    try:
+        report = check_data_health(
+            positions_path=args.positions,
+            decision_log_path=args.decision_log,
+            model_scores_path=args.model_scores,
+            active_universe_path=args.active_universe,
+            risk_calendar_path=args.risk_calendar,
+            industry_map_path=args.industry_map,
+            max_model_score_age_days=args.max_model_score_age,
+        )
+    except Exception as exc:
+        print(f"Error: data-health check failed ({type(exc).__name__}): {exc}", file=sys.stderr)
+        return 2
+
+    if args.json:
+        import dataclasses as _dc
+        import json as _json
+        report_dict = _dc.asdict(report)
+        report_dict["as_of"] = report.as_of.isoformat()
+        print(_json.dumps(report_dict, ensure_ascii=False, indent=2, default=str))
+    else:
+        print(format_data_health_text(report))
+
+    if args.notify == "feishu":
+        card = format_data_health_card(report, title=args.notify_title)
+        send_card(card)
+        print("Feishu notification sent.")
+
+    return 0 if report.is_healthy else 1
+
+
 def add_check(checks: list[dict], name: str, ok: bool, detail: str, level: str) -> None:
     checks.append({"name": name, "ok": ok, "detail": detail, "level": level})
 
@@ -612,42 +875,202 @@ def add_writable_dir_check(checks: list[dict], path: Path, name: str) -> None:
 def trade_plan_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Build a 3-day short-term trading plan")
     parser.add_argument("--positions", default="data/positions/current_positions.json", help="current positions JSON path")
-    parser.add_argument("--watchlist", default="data/watchlists/broad_target_pool_2026-07-03.txt", help="candidate watchlist path")
-    parser.add_argument("--source", choices=["akshare", "baostock"], default="baostock", help="daily bar source")
+    parser.add_argument(
+        "--watchlist",
+        default=os.environ.get("BEICHEN_BROAD_WATCHLIST", "data/watchlists/broad_target_pool_latest.txt"),
+        help="candidate watchlist path",
+    )
+    parser.add_argument(
+        "--priority-watchlist",
+        default=os.environ.get("BEICHEN_PRIORITY_WATCHLIST", "data/watchlists/innovation_drug_pool.txt"),
+        help="extra priority candidate watchlist, merged into trade planning",
+    )
+    parser.add_argument("--source", choices=["akshare", "baostock", "qlib"], default="baostock", help="daily bar source")
+    parser.add_argument("--qlib-provider-uri", default=os.environ.get("QLIB_PROVIDER_URI", "../daozang-alpha/data/qlib/cn_data"), help="Qlib binary provider directory")
     parser.add_argument("--benchmark", default="000300", help="benchmark index code")
-    parser.add_argument("--start", default="20260601", help="start date for candidate bars")
-    parser.add_argument("--end", default="20260703", help="end date for candidate bars")
+    parser.add_argument("--profile", default="config/profile_overrides.csv", help="optional stock profile override CSV path")
+    parser.add_argument(
+        "--daozang-active-universe",
+        default="../daozang-alpha/data/universe/active_universe.csv",
+        help="Daozang active universe profile CSV",
+    )
+    parser.add_argument(
+        "--daozang-industry-map",
+        default="../daozang-alpha/data/universe/akshare_industry_map.csv",
+        help="Daozang AKShare industry map CSV",
+    )
+    parser.add_argument("--disable-daozang-profiles", action="store_true", help="skip Daozang profile CSVs")
+    parser.add_argument("--start", default=None, help="start date for candidate bars; default is source-specific recent history")
+    parser.add_argument("--end", default=None, help="end date for candidate bars; default is today")
     parser.add_argument("--review-date", default="", help="holding review date, YYYYMMDD; default uses --end")
     parser.add_argument("--capital", type=float, default=10000.0, help="account capital for planning")
     parser.add_argument("--top", type=int, default=3, help="number of buy candidates")
     parser.add_argument("--max-trade-pct", type=float, default=None, help="optional single trade budget cap as capital fraction")
     parser.add_argument("--model-scores", default="../daozang-alpha/data/exports/alpha_scores_latest.csv", help="Daozang latest score CSV")
+    parser.add_argument("--disable-opinions", action="store_true", help="disable personal opinion source")
+    parser.add_argument("--disable-flow-factor", action="store_true", help="disable flow-based factors (龙虎榜/北向/主力资金)")
+    parser.add_argument("--disable-global-linkage", action="store_true", help="disable global linkage factor (美股映射)")
+    parser.add_argument("--disable-sentiment", action="store_true", help="disable sentiment/leverage factors")
+    parser.add_argument("--disable-advanced", action="store_true", help="disable advanced factors (股东增减持)")
+    parser.add_argument("--disable-risk-calendar", action="store_true", help="disable prebuilt risk calendar factor")
+    parser.add_argument("--risk-forward-days", type=int, default=30, help="future risk calendar window")
+    parser.add_argument(
+        "--static-risk-calendar",
+        default="../daozang-alpha/data/universe/akshare_risk_calendar.csv",
+        help="prebuilt Daozang risk calendar CSV",
+    )
+    parser.add_argument("--disable-static-risk-calendar", action="store_true", help="skip prebuilt Daozang risk calendar CSV")
+    parser.add_argument("--opinion-lookback-days", type=int, default=7, help="personal opinion signal lookback window")
+    parser.add_argument("--opinion-as-of", default="", help="personal opinion signal cutoff time; default is now")
+    parser.add_argument("--opinion-signals", default="data/opinion_signals.jsonl", help="personal opinion signal JSONL path")
+    parser.add_argument(
+        "--disable-realtime-execution",
+        action="store_true",
+        help="skip realtime quote execution facts in trade plan",
+    )
+    parser.add_argument(
+        "--exclude-trade-groups",
+        default=os.environ.get("BEICHEN_EXCLUDE_TRADE_GROUPS", "能源"),
+        help="comma-separated trade groups excluded from new positions",
+    )
+    parser.add_argument(
+        "--prefer-trade-groups",
+        default=os.environ.get("BEICHEN_PREFER_TRADE_GROUPS", "医药"),
+        help="comma-separated trade groups preferred for new positions",
+    )
     parser.add_argument("--notify", choices=["none", "feishu"], default="none", help="send plan to Feishu")
     parser.add_argument("--decision-log", default=str(DEFAULT_DECISION_LOG_PATH), help="local JSONL decision log path")
+    parser.add_argument("--min-model-pct-rank", type=float, default=float(os.environ.get("BEICHEN_MIN_MODEL_PCT_RANK", "0.0")), help="minimum Daozang model pct_rank (0.0-1.0) for candidates")
     args = parser.parse_args(argv)
 
     try:
         as_of = parse_as_of(args.end)
         review_as_of = parse_as_of(args.review_date) if args.review_date else as_of
+        opinion_as_of = resolve_opinion_as_of(args.opinion_as_of, review_as_of)
         positions = load_positions(args.positions)
-        symbols = dedupe([item["code"] for item in positions] + read_watchlist(args.watchlist))
-        price_map = (
-            BaostockPriceSource(
-                symbols=symbols,
-                benchmark=args.benchmark,
-                start_date=args.start,
-                end_date=args.end,
-            ).load()
-            if args.source == "baostock"
-            else AksharePriceSource(
-                symbols=symbols,
-                benchmark=args.benchmark,
-                start_date=args.start,
-                end_date=args.end,
-            ).load()
+        symbols = dedupe(
+            [item["code"] for item in positions]
+            + read_watchlist(args.watchlist)
+            + read_optional_watchlist(args.priority_watchlist)
         )
-        live_profiles = fetch_tencent_profiles([code for code in price_map if code != args.benchmark])
-        profiles = merge_profiles(infer_profiles_from_names(live_profiles), live_profiles)
+        # Load model scores early for candidate-level filtering
+        raw_model_scores = load_model_scores(args.model_scores)
+        ranking_model_scores = raw_model_scores
+        if args.min_model_pct_rank > 0:
+            before = len(symbols)
+            # Keep positions always (don't filter holdings)
+            held_codes = {item["code"] for item in positions}
+            symbols = [
+                s for s in symbols
+                if s in held_codes
+                or raw_model_scores.get(s, 1.0) >= args.min_model_pct_rank  # keep if not in model (no data)
+            ]
+            filtered_out = before - len(symbols)
+            log_step(args, f"道藏候选过滤 ≥{args.min_model_pct_rank:.0%}: {before}→{len(symbols)}只 (排除{filtered_out}只)")
+        # Filter only the ranking input. Trade-plan holding review still needs raw scores.
+        if args.min_model_pct_rank > 0:
+            ranking_model_scores = {k: v for k, v in raw_model_scores.items() if v >= args.min_model_pct_rank}
+        if args.source == "qlib":
+            price_map = QlibBinPriceSource(
+                provider_uri=args.qlib_provider_uri,
+                codes=symbols,
+            ).load()
+            # Also load benchmark from qlib if available
+            bench_bars = QlibBinPriceSource(
+                provider_uri=args.qlib_provider_uri,
+                codes=[args.benchmark],
+            ).load()
+            if bench_bars:
+                price_map[args.benchmark] = bench_bars.get(args.benchmark, [])
+        elif args.source == "baostock":
+            price_map = BaostockPriceSource(
+                symbols=symbols,
+                benchmark=args.benchmark,
+                start_date=args.start,
+                end_date=args.end,
+            ).load()
+        else:
+            price_map = AksharePriceSource(
+                symbols=symbols,
+                benchmark=args.benchmark,
+                start_date=args.start,
+                end_date=args.end,
+            ).load()
+        stock_symbols = [code for code in price_map if code != args.benchmark]
+        daozang_profiles = load_cli_daozang_profiles(args)
+        manual_profiles = load_profiles(args.profile)
+        live_profiles = fetch_tencent_profiles(stock_symbols)
+        profiles = merge_profiles(
+            daozang_profiles,
+            infer_profiles_from_names(live_profiles),
+            manual_profiles,
+            live_profiles,
+        )
+        if daozang_profiles:
+            log_step(args, f"道藏画像: {len(daozang_profiles)} 条")
+        model_coverage = inspect_model_score_coverage(
+            args.model_scores,
+            stock_symbols,
+            as_of=review_as_of,
+        )
+        if args.disable_realtime_execution:
+            realtime_quotes = {}
+        else:
+            quote_symbols = dedupe(stock_symbols + [str(item["code"]) for item in positions])
+            try:
+                log_step(args, "加载腾讯实时行情/交易执行因子...")
+                realtime_quotes = DefaultMarketDataRouter(quote_symbols).load()
+                log_step(args, f"实时行情: {len(realtime_quotes)}/{len(quote_symbols)} 只")
+            except Exception as exc:
+                realtime_quotes = {}
+                log_step(args, f"实时行情不可用，回退日线参考价: {type(exc).__name__}: {exc}")
+        if args.disable_risk_calendar or args.disable_static_risk_calendar:
+            risk_calendar_events = {}
+        else:
+            risk_calendar_events = load_static_risk_calendar(
+                args.static_risk_calendar,
+                symbols=stock_symbols,
+                as_of=review_as_of,
+                forward_days=args.risk_forward_days,
+            )
+            risk_count = sum(len(events) for events in risk_calendar_events.values())
+            log_step(args, f"道藏风险日历: {risk_count} 个")
+        opinion_events = {} if args.disable_opinions else OpinionSignalNewsSource(
+            symbols=stock_symbols,
+            profiles=profiles,
+            path=args.opinion_signals,
+            as_of=opinion_as_of,
+            lookback_days=args.opinion_lookback_days,
+        ).load()
+        if args.disable_flow_factor:
+            flow_snapshot = None
+        else:
+            log_step(args, "加载资金面数据...")
+            flow_snapshot = AkshareFlowSource(
+                symbols=stock_symbols,
+                as_of=review_as_of,
+            ).load()
+            log_step(args, f"资金面: {', '.join(flow_snapshot.source_health) if flow_snapshot.source_health else '无数据'}")
+        if args.disable_global_linkage:
+            global_linkage_snapshot = None
+        else:
+            log_step(args, "加载全球联动...")
+            global_linkage_snapshot = GlobalLinkageSource().load()
+        if args.disable_sentiment:
+            sentiment_snapshot = None
+        else:
+            log_step(args, "加载情绪/杠杆数据...")
+            sentiment_snapshot = AkshareSentimentSource(symbols=stock_symbols, as_of=review_as_of).load()
+        if args.disable_advanced:
+            advanced_snapshot = None
+        else:
+            advanced_snapshot = AkshareAdvancedSource(symbols=stock_symbols, as_of=review_as_of).load()
+        bond_map = load_bond_map()
+        etf_scale_map = load_etf_scale_map()
+        if args.disable_advanced:
+            heat_snapshot = None
+        else:
+            heat_snapshot = AkshareHeatSource(symbols=stock_symbols, as_of=review_as_of).load()
         recommendations = rank_recommendations(
             price_map,
             args.benchmark,
@@ -662,6 +1085,17 @@ def trade_plan_main(argv: list[str]) -> int:
             macro_events=[],
             market_regime=None,
             sector_signals={},
+            news_events=opinion_events,
+            risk_calendar_events=risk_calendar_events,
+            model_scores=ranking_model_scores,
+            flow_snapshot=flow_snapshot,
+            global_linkage_snapshot=global_linkage_snapshot,
+            sentiment_snapshot=sentiment_snapshot,
+            advanced_snapshot=advanced_snapshot,
+            bond_map=bond_map,
+            etf_scale_map=etf_scale_map,
+            heat_snapshot=heat_snapshot,
+            as_of=opinion_as_of,
         )
         plan = build_three_day_trade_plan(
             recommendations,
@@ -669,9 +1103,13 @@ def trade_plan_main(argv: list[str]) -> int:
             capital=args.capital,
             top_n=args.top,
             max_trade_pct=args.max_trade_pct,
-            model_scores=load_model_scores(args.model_scores),
+            model_scores=raw_model_scores,
+            excluded_groups=parse_symbols(args.exclude_trade_groups),
+            preferred_groups=parse_symbols(args.prefer_trade_groups),
             review_date=review_as_of,
             trading_dates=[bar.date for bar in price_map.get(args.benchmark, [])],
+            model_coverage=model_coverage,
+            realtime_quotes=realtime_quotes,
         )
     except Exception as exc:
         print(f"Error: trade-plan failed ({type(exc).__name__}): {exc}", file=sys.stderr)
@@ -702,6 +1140,17 @@ def daily_refresh_pool_main(argv: list[str]) -> int:
     parser.add_argument("--latest-path", default="data/watchlists/broad_target_pool_latest.txt", help="latest broad pool path")
     parser.add_argument("--previous", default="", help="optional previous pool path; default uses latest or newest dated pool")
     parser.add_argument("--profile", default="config/profile_overrides.csv", help="optional stock profile override CSV path")
+    parser.add_argument(
+        "--daozang-active-universe",
+        default="../daozang-alpha/data/universe/active_universe.csv",
+        help="Daozang active universe profile CSV",
+    )
+    parser.add_argument(
+        "--daozang-industry-map",
+        default="../daozang-alpha/data/universe/akshare_industry_map.csv",
+        help="Daozang AKShare industry map CSV",
+    )
+    parser.add_argument("--disable-daozang-profiles", action="store_true", help="skip Daozang profile CSVs")
     parser.add_argument("--cycle", choices=["balanced", "defensive", "recovery", "growth", "inflation"], default="balanced")
     parser.add_argument("--horizon", choices=["ultra_short_2_3d", "short_3_5d", "position_10_20d"], default="ultra_short_2_3d")
     parser.add_argument("--min-market-cap", type=float, default=300.0, help="minimum market cap in CNY billion")
@@ -718,6 +1167,12 @@ def daily_refresh_pool_main(argv: list[str]) -> int:
     parser.add_argument("--disable-market-structure", action="store_true", help="disable market structure factor")
     parser.add_argument("--risk-forward-days", type=int, default=30, help="future risk calendar window")
     parser.add_argument("--disable-risk-calendar", action="store_true", help="disable risk calendar factor")
+    parser.add_argument(
+        "--static-risk-calendar",
+        default="../daozang-alpha/data/universe/akshare_risk_calendar.csv",
+        help="prebuilt Daozang risk calendar CSV",
+    )
+    parser.add_argument("--disable-static-risk-calendar", action="store_true", help="skip prebuilt Daozang risk calendar CSV")
     parser.add_argument("--disable-pledge-risk", action="store_true", help="skip pledge risk checks")
     parser.add_argument("--disable-macro-events", action="store_true", help="disable global macro event factor")
     parser.add_argument("--macro-events", default="config/macro_events.csv", help="macro event CSV path")
@@ -737,7 +1192,14 @@ def daily_refresh_pool_main(argv: list[str]) -> int:
     parser.add_argument("--include-disclosures", action="store_true", help="include CNINFO disclosures; slower")
     parser.add_argument("--disable-opinions", action="store_true", help="disable personal opinion source")
     parser.add_argument("--opinion-lookback-days", type=int, default=7, help="personal opinion signal lookback window")
+    parser.add_argument("--opinion-as-of", default="", help="personal opinion signal cutoff time; default is now")
     parser.add_argument("--opinion-signals", default="data/opinion_signals.jsonl", help="personal opinion signal JSONL path")
+    parser.add_argument("--disable-model-scores", action="store_true", help="disable Daozang model score factor")
+    parser.add_argument(
+        "--model-scores",
+        default="../daozang-alpha/data/exports/alpha_scores_latest.csv",
+        help="Daozang latest score CSV",
+    )
     parser.add_argument("--notify", choices=["none", "feishu"], default="none", help="send refresh report notification")
     parser.add_argument("--notify-title", default="北辰 Alpha 基础池刷新", help="notification title")
     parser.add_argument("--decision-log", default=str(DEFAULT_DECISION_LOG_PATH), help="local JSONL decision log path")
@@ -746,6 +1208,7 @@ def daily_refresh_pool_main(argv: list[str]) -> int:
 
     try:
         as_of = parse_as_of(args.end)
+        opinion_as_of = resolve_opinion_as_of(args.opinion_as_of, as_of)
         date_text = as_of.strftime("%Y-%m-%d")
         out_dir = Path(args.out_dir)
         dated_path = out_dir / f"broad_target_pool_{date_text}.txt"
@@ -754,7 +1217,11 @@ def daily_refresh_pool_main(argv: list[str]) -> int:
         previous_entries = read_watchlist_entries(previous_path) if previous_path else {}
 
         log_step(args, "刷新全A动态候选宇宙...")
-        profile_overrides = load_profiles(args.profile)
+        daozang_profiles = load_cli_daozang_profiles(args)
+        manual_profiles = load_profiles(args.profile)
+        profile_overrides = merge_profiles(daozang_profiles, manual_profiles)
+        if daozang_profiles:
+            log_step(args, f"道藏画像: {len(daozang_profiles)} 条")
         universe = AkshareUniverseSource(
             limit=args.scan_limit,
             candidates=args.universe_candidates,
@@ -838,6 +1305,16 @@ def daily_refresh_pool_main(argv: list[str]) -> int:
         risk_calendar_events = {}
         if not args.disable_risk_calendar:
             log_step(args, "加载风险日历...")
+            static_calendar_events = (
+                {}
+                if args.disable_static_risk_calendar
+                else load_static_risk_calendar(
+                    args.static_risk_calendar,
+                    symbols=stock_symbols,
+                    as_of=as_of,
+                    forward_days=args.risk_forward_days,
+                )
+            )
             calendar_events = AkshareRiskCalendarSource(
                 symbols=stock_symbols,
                 as_of=as_of,
@@ -845,7 +1322,7 @@ def daily_refresh_pool_main(argv: list[str]) -> int:
                 include_pledge=not args.disable_pledge_risk,
             ).load()
             disclosure_calendar_events = disclosure_events_to_risk_calendar(disclosure_events) if disclosure_events else {}
-            risk_calendar_events = merge_risk_event_maps(calendar_events, disclosure_calendar_events)
+            risk_calendar_events = merge_risk_event_maps(static_calendar_events, calendar_events, disclosure_calendar_events)
 
         news_events = {}
         if args.include_news:
@@ -857,10 +1334,17 @@ def daily_refresh_pool_main(argv: list[str]) -> int:
                 symbols=stock_symbols,
                 profiles=profiles,
                 path=args.opinion_signals,
-                as_of=as_of,
+                as_of=opinion_as_of,
                 lookback_days=args.opinion_lookback_days,
             ).load()
             news_events = merge_event_maps(news_events, opinion_events)
+
+        if args.disable_model_scores:
+            log_step(args, "已跳过道藏模型分数。")
+            model_scores = {}
+        else:
+            model_scores = load_model_scores(args.model_scores)
+            log_step(args, f"道藏模型分数: {len(model_scores)} 条")
 
         log_step(args, "计算并刷新基础池...")
         recommendations = rank_recommendations(
@@ -875,6 +1359,7 @@ def daily_refresh_pool_main(argv: list[str]) -> int:
             market_regime=market_regime,
             market_structure=market_structure,
             sector_signals=sector_signals,
+            model_scores=model_scores,
             as_of=as_of,
         )
         recommendations = [item for item in recommendations if item.status != "排除"][: args.pool_size]
@@ -1004,6 +1489,9 @@ def candidate_screen_context(args: argparse.Namespace, symbols: list[str]) -> di
         "limit": args.limit,
         "include_excluded": args.include_excluded,
         "enabled_sources": enabled_sources_context(args),
+        "model_scores": args.model_scores,
+        "daozang_profiles": not args.disable_daozang_profiles,
+        "static_risk_calendar": not args.disable_static_risk_calendar,
     }
 
 
@@ -1014,6 +1502,7 @@ def trade_plan_context(args: argparse.Namespace, symbols: list[str]) -> dict:
         "benchmark": args.benchmark,
         "positions": args.positions,
         "watchlist": args.watchlist,
+        "priority_watchlist": args.priority_watchlist,
         "symbols": symbols,
         "start": args.start,
         "end": args.end,
@@ -1022,6 +1511,10 @@ def trade_plan_context(args: argparse.Namespace, symbols: list[str]) -> dict:
         "top": args.top,
         "max_trade_pct": args.max_trade_pct,
         "model_scores": args.model_scores,
+        "daozang_profiles": not args.disable_daozang_profiles,
+        "static_risk_calendar": not args.disable_static_risk_calendar,
+        "exclude_trade_groups": parse_symbols(args.exclude_trade_groups),
+        "prefer_trade_groups": parse_symbols(args.prefer_trade_groups),
     }
 
 
@@ -1040,6 +1533,7 @@ def daily_pool_context(args: argparse.Namespace, symbols: list[str], dated_path:
         "end": args.end,
         "dated_path": str(dated_path),
         "latest_path": str(latest_path),
+        "model_scores": args.model_scores,
         "enabled_sources": {
             "macro_events": not args.disable_macro_events,
             "macro_rss": not args.disable_macro_rss,
@@ -1047,10 +1541,13 @@ def daily_pool_context(args: argparse.Namespace, symbols: list[str], dated_path:
             "market_regime": True,
             "sector_rotation": True,
             "risk_calendar": not args.disable_risk_calendar,
+            "static_risk_calendar": not args.disable_static_risk_calendar,
+            "daozang_profiles": not args.disable_daozang_profiles,
             "pledge_risk": not args.disable_pledge_risk,
             "ordinary_news": args.include_news,
             "disclosures": args.include_disclosures,
             "opinions": not args.disable_opinions,
+            "model_scores": not args.disable_model_scores,
         },
     }
 
@@ -1064,9 +1561,12 @@ def enabled_sources_context(args: argparse.Namespace) -> dict:
         "sector_rotation": not args.disable_sector_rotation and args.source != "csv",
         "disclosures": not args.disable_disclosures,
         "risk_calendar": not args.disable_risk_calendar and args.source != "csv",
+        "static_risk_calendar": not args.disable_static_risk_calendar and args.source != "csv",
+        "daozang_profiles": not args.disable_daozang_profiles,
         "pledge_risk": not args.disable_pledge_risk,
         "ordinary_news": not args.disable_news,
         "opinions": not args.disable_opinions,
+        "model_scores": not args.disable_model_scores,
         "realtime": args.realtime and args.source != "csv",
     }
 
@@ -1077,6 +1577,15 @@ def infer_profiles_from_names(profiles: dict) -> dict:
         for code, profile in profiles.items()
         if profile.name and profile.name != code
     }
+
+
+def load_cli_daozang_profiles(args: argparse.Namespace) -> dict:
+    if getattr(args, "disable_daozang_profiles", False):
+        return {}
+    return load_daozang_profiles(
+        getattr(args, "daozang_active_universe", ""),
+        getattr(args, "daozang_industry_map", ""),
+    )
 
 
 def load_profiles(path: str) -> dict:
@@ -1125,6 +1634,15 @@ def read_watchlist(path: str) -> list[str]:
     return rows
 
 
+def read_optional_watchlist(path: str) -> list[str]:
+    if not path:
+        return []
+    watchlist_path = Path(path)
+    if not watchlist_path.exists() or watchlist_path.is_dir():
+        return []
+    return read_watchlist(path)
+
+
 def dedupe(values: list[str]) -> list[str]:
     seen = set()
     result = []
@@ -1133,6 +1651,15 @@ def dedupe(values: list[str]) -> list[str]:
             result.append(value)
             seen.add(value)
     return result
+
+
+def resolve_opinion_as_of(raw: str, fallback: datetime) -> datetime:
+    if raw.strip():
+        parsed = parse_optional_datetime(raw)
+        if parsed is not None:
+            return parsed
+    now = datetime.now()
+    return now if now > fallback else fallback
 
 
 def parse_as_of(raw: str | None) -> datetime:

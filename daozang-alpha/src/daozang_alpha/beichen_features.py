@@ -46,6 +46,7 @@ ACTION_SCORE = {
 
 BREAKDOWN_NAME_TO_FEATURE = {
     "宏观事件": "beichen_policy_score",
+    "政策因子": "beichen_policy_score",
     "资金博弈": "beichen_flow_score",
     "板块生命周期": "beichen_sector_lifecycle_score",
     "预期定价": "beichen_expectation_score",

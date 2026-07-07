@@ -260,6 +260,7 @@ def holding_plan_to_record(
                 "trigger": item.trigger,
                 "execution_detail": item.execution_detail,
             },
+            "factor_scores": [factor_score_to_dict(score) for score in item.factor_scores],
             "execution": plan_execution_to_dict(item),
             "strategy_profile": classify_holding_strategy(item),
             "final_action": {
@@ -326,6 +327,7 @@ def buy_plan_to_record(
                 "trigger": item.trigger,
                 "execution_detail": item.execution_detail,
             },
+            "factor_scores": [factor_score_to_dict(score) for score in item.factor_scores],
             "execution": plan_execution_to_dict(item),
             "strategy_profile": classify_buy_plan_strategy(item),
             "final_action": {
