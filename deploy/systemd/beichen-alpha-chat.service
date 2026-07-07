@@ -5,10 +5,10 @@ After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/daozang-alpha-suite/beichen-alpha
-Environment=PYTHON_BIN=/opt/daozang-alpha-suite/beichen-alpha/.venv/bin/python
+WorkingDirectory=/www/wwwroot/daozang-alpha-suite/beichen-alpha
+Environment=PYTHON_BIN=/www/wwwroot/daozang-alpha-suite/beichen-alpha/.venv/bin/python
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/daozang-alpha-suite/beichen-alpha/scripts/beichen_chat_server.sh
+ExecStart=/www/wwwroot/daozang-alpha-suite/beichen-alpha/scripts/beichen_chat_server.sh
 Restart=always
 RestartSec=5
 

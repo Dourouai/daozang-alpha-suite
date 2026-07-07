@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/daozang-alpha-suite/beichen-alpha
-Environment=PYTHON_BIN=/opt/daozang-alpha-suite/beichen-alpha/.venv/bin/python
-ExecStart=/opt/daozang-alpha-suite/beichen-alpha/scripts/server_daily_run.sh
+WorkingDirectory=/www/wwwroot/daozang-alpha-suite/beichen-alpha
+Environment=PYTHON_BIN=/www/wwwroot/daozang-alpha-suite/beichen-alpha/.venv/bin/python
+ExecStart=/www/wwwroot/daozang-alpha-suite/beichen-alpha/scripts/server_daily_run.sh
 Nice=5
