@@ -1,0 +1,11 @@
+[Unit]
+Description=Beichen Alpha 30-minute data prewarm
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/www/wwwroot/daozang-alpha-suite/beichen-alpha
+Environment=PYTHON_BIN=/www/wwwroot/daozang-alpha-suite/beichen-alpha/.venv/bin/python
+ExecStart=/www/wwwroot/daozang-alpha-suite/beichen-alpha/scripts/beichen_data_prewarm.sh
+Nice=5

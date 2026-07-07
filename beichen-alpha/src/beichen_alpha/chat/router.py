@@ -248,7 +248,7 @@ def render_positions_snapshot(root: Path) -> str:
 def render_status(root: Path) -> str:
     checks = [
         ("持仓文件", root / "data/positions/current_positions.json"),
-        ("基础候选池", root / "data/watchlists/broad_target_pool_2026-07-03.txt"),
+        ("基础候选池", root / os.environ.get("BEICHEN_BROAD_WATCHLIST", "data/watchlists/broad_target_pool_latest.txt")),
         ("创新药主题池", root / "data/watchlists/innovation_drug_pool.txt"),
         ("决策日志目录", root / "data/decision_logs"),
         ("运行状态目录", root / "data/runtime"),
@@ -376,7 +376,10 @@ def build_fresh_recommendation_command(
 def resolve_recommendation_watchlist(sector_label: str, keywords: tuple[str, ...]) -> str:
     if sector_label == "医疗/医药" or any(keyword in {"医疗", "医药", "创新药"} for keyword in keywords):
         return os.environ.get("BEICHEN_CHAT_MEDICAL_WATCHLIST", "data/watchlists/innovation_drug_pool.txt")
-    return os.environ.get("BEICHEN_CHAT_BROAD_WATCHLIST", "data/watchlists/broad_target_pool_2026-07-03.txt")
+    return os.environ.get(
+        "BEICHEN_CHAT_BROAD_WATCHLIST",
+        os.environ.get("BEICHEN_BROAD_WATCHLIST", "data/watchlists/broad_target_pool_latest.txt"),
+    )
 
 
 def record_recommendation_job(root: Path, job: RecommendationJob, created_at: datetime) -> None:
@@ -548,6 +551,7 @@ def record_to_recommendation(record: dict) -> Recommendation:
         candidate_breakdown=str(rationale.get("candidate_breakdown") or ""),
         macro_event_score=int(scores.get("macro_event_score") or 0),
         macro_events=str(rationale.get("macro_events") or ""),
+        model_pct_rank=parse_optional_float(scores.get("model_pct_rank")),
     )
 
 
@@ -558,6 +562,15 @@ def summarize_record_reason(record: dict) -> str:
         if value:
             return value
     return "来自最近一次可追溯候选记录。"
+
+
+def parse_optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def log_chat_recommendations(
@@ -605,6 +618,7 @@ def log_chat_recommendations(
                 "scores": {
                     "candidate_score": item.candidate_score or item.score,
                     "execution_score": None if check is None else check.execution_score,
+                    "model_pct_rank": item.model_pct_rank,
                 },
                 "rationale": {
                     "source_reason": summarize_record_reason(source),
@@ -647,35 +661,162 @@ def format_quote(quote: RealtimeQuote | None) -> str:
 
 
 def render_latest_trade_plan(root: Path) -> str:
+    cached = read_cached_trade_plan(root)
+    if cached:
+        return cached
     records = read_decision_records(root / "data/decision_logs/recommendations.jsonl")
     plan_records = [item for item in records if item.get("run_kind") == "three_day_trade_plan"]
     if not plan_records:
         return "还没有 3 日交易计划日志。可以先运行 scripts/server_daily_run.sh 或 trade-plan。"
     latest_run_id = max(plan_records, key=lambda item: item.get("logged_at", "")).get("run_id")
     latest = [item for item in plan_records if item.get("run_id") == latest_run_id]
+    if not latest:
+        return "还没有可读取的 3 日交易计划明细。"
+    latest_logged_at = max(str(item.get("logged_at") or "") for item in latest)
+    latest = [item for item in latest if str(item.get("logged_at") or "") == latest_logged_at]
+    as_of_text = str(latest[0].get("as_of") or "-")
+    context = latest[0].get("context") or {}
+    portfolio = latest[0].get("portfolio") or {}
     buys = sorted(
         [item for item in latest if item.get("decision_kind") == "trade_plan_buy"],
         key=lambda item: item.get("rank", 0),
     )
-    holdings = [item for item in latest if item.get("decision_kind") == "holding_review"]
+    holdings = sorted(
+        [item for item in latest if item.get("decision_kind") == "holding_review"],
+        key=lambda item: item.get("rank", 0),
+    )
     lines = [
-        "最近 3 日交易计划",
-        f"- 时间: {latest[0].get('as_of', '-') if latest else '-'}",
-        f"- 持仓复核: {len(holdings)} 条",
+        "北辰 Alpha｜最新交易计划",
+        f"计划时间: {as_of_text}",
+        f"生成时间: {latest_logged_at or '-'}",
+        f"复核日期: {context.get('review_date') or '-'}",
+        "",
+        "账户状态",
+        f"- 总资金: {fmt(portfolio.get('capital'))}",
+        f"- 已占用成本: {fmt(portfolio.get('invested_cost'))}",
+        f"- 可用现金估算: {fmt(portfolio.get('available_cash'))}",
+        f"- 调仓轮动预算: {fmt(portfolio.get('rotation_cash'))}",
     ]
+    risk_posture = portfolio.get("risk_posture") or {}
+    if risk_posture:
+        lines.append(
+            "- 新开仓风控: "
+            f"{risk_posture.get('label') or '-'} | "
+            f"预算系数 {fmt_unsigned_pct(risk_posture.get('new_buy_budget_scale'))} | "
+            f"候选失效率 {fmt_unsigned_pct(risk_posture.get('candidate_failure_ratio'))} | "
+            f"可执行 {risk_posture.get('candidate_executable_count', '-')} 只"
+        )
+    lines.extend(["", "已有持仓处理"])
+    if not holdings:
+        lines.append("- 当前计划未记录持仓复核。")
+    for item in holdings:
+        prices = item.get("prices") or {}
+        sizing = item.get("sizing") or {}
+        scores = item.get("scores") or {}
+        rationale = item.get("rationale") or {}
+        final_action = item.get("final_action") or {}
+        shares = sizing.get("shares")
+        pnl_text = fmt_money(sizing.get("pnl"))
+        pnl_pct_text = fmt_pct(sizing.get("pnl_pct"))
+        holding_days = sizing.get("holding_trade_days")
+        holding_days_text = "-" if holding_days in {None, ""} else f"第{holding_days}个交易日"
+        lines.extend(
+            [
+                (
+                    f"{item.get('rank')}. {item.get('name')} {item.get('code')} | "
+                    f"{item.get('status')} | {shares or '-'} 股"
+                ),
+                (
+                    f"   现价 {fmt(prices.get('current'))} | 成本 {fmt(prices.get('cost'))} | "
+                    f"盈亏 {pnl_text} ({pnl_pct_text})"
+                ),
+                (
+                    f"   确认 {fmt(prices.get('confirm'))} | 止损 {fmt(prices.get('stop'))} | "
+                    f"目标 {fmt(prices.get('target'))} | 道藏 {fmt_model_rank(scores.get('model_pct_rank'))}"
+                ),
+                (
+                    f"   入场 {sizing.get('entry_date') or '-'} | 持仓 {holding_days_text}"
+                ),
+                (
+                    f"   最终动作: {final_action.get('action') or item.get('action') or '-'} | "
+                    f"置信 {final_action.get('confidence') or '-'}"
+                ),
+                f"   动作理由: {final_action.get('reason') or '-'}",
+                f"   触发: {rationale.get('trigger') or '-'}",
+            ]
+        )
+    lines.extend(["", "新增候选和触发价"])
     if not buys:
         lines.append("- 当前没有新增买入候选。")
     for item in buys:
         prices = item.get("prices", {})
         scores = item.get("scores", {})
-        lines.append(
-            (
-                f"{item.get('rank')}. {item.get('name')} {item.get('code')} | {item.get('status')} | "
-                f"分 {scores.get('candidate_score', '-')} | 确认 {fmt(prices.get('confirm'))} | "
-                f"止损 {fmt(prices.get('stop'))} | 目标 {fmt(prices.get('target'))}"
-            )
+        sizing = item.get("sizing") or {}
+        rationale = item.get("rationale") or {}
+        risk = item.get("risk") or {}
+        final_action = item.get("final_action") or {}
+        lines.extend(
+            [
+                (
+                    f"{item.get('rank')}. {item.get('name')} {item.get('code')} | "
+                    f"{item.get('group') or '-'} | {item.get('status')}"
+                ),
+                (
+                    f"   候选分 {scores.get('candidate_score', '-')} | "
+                    f"模型评分 {fmt_model_rank(scores.get('model_pct_rank'))}"
+                ),
+                (
+                    f"   收盘 {fmt(prices.get('close'))} | 确认 {fmt(prices.get('confirm'))} | "
+                    f"追高线 {fmt(prices.get('chase_limit'))}"
+                ),
+                (
+                    f"   止损 {fmt(prices.get('stop'))} | 目标 {fmt(prices.get('target'))} | "
+                    f"一手约 {fmt_money(sizing.get('lot_cost'))} | 最多 {sizing.get('max_lots', '-')} 手"
+                ),
+                (
+                    f"   最终动作: {final_action.get('action') or '-'} | "
+                    f"置信 {final_action.get('confidence') or '-'}"
+                ),
+                f"   动作理由: {final_action.get('reason') or '-'}",
+                f"   触发: {rationale.get('trigger') or '-'}",
+                f"   风控: {risk.get('risk_text') or '-'}",
+            ]
         )
+    notes = portfolio.get("notes") or []
+    lines.extend(["", "周一执行顺序"])
+    lines.append("- 9:30-10:00 只观察，不追高开，不因开盘冲动加仓。")
+    lines.append("- 10:00-10:30 先复核持仓是否脱离成本/确认区，再决定是否释放仓位。")
+    lines.append("- 新候选只在放量站上确认价且未超过追高线时考虑；未触发就不买。")
+    lines.append("- 若持仓转弱，先减弱势持仓释放资金，再执行新候选。")
+    if notes:
+        lines.extend(["", "纪律备注"])
+        lines.extend(f"- {note}" for note in notes)
+    lines.append("")
+    lines.append("仅用于个人研究和策略测试，不构成投资建议。")
     return "\n".join(lines)
+
+
+def read_cached_trade_plan(root: Path) -> str:
+    text_path = root / os.environ.get("BEICHEN_PREWARM_TRADE_PLAN_TEXT", "data/runtime/latest_trade_plan.txt")
+    status_path = root / os.environ.get("BEICHEN_PREWARM_STATUS_JSON", "data/runtime/latest_data_prewarm.json")
+    if not text_path.exists():
+        return ""
+    text = text_path.read_text(encoding="utf-8").strip()
+    if not text:
+        return ""
+    status = {}
+    if status_path.exists():
+        try:
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            status = {}
+    finished_at = str(status.get("finished_at") or "")
+    source = str(status.get("source") or "")
+    header = ["北辰 Alpha｜最新交易计划缓存"]
+    if finished_at or source:
+        header.append(f"缓存时间: {finished_at or '-'} | 数据路径: {source or '-'}")
+    header.append("")
+    return "\n".join(header) + text
 
 
 def render_decision_log_summary(root: Path) -> str:
@@ -700,5 +841,41 @@ def fmt(value) -> str:
         return "-"
     try:
         return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def fmt_money(value) -> str:
+    if value is None:
+        return "-"
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def fmt_pct(value) -> str:
+    if value is None:
+        return "-"
+    try:
+        return f"{float(value):+.2%}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def fmt_unsigned_pct(value) -> str:
+    if value is None:
+        return "-"
+    try:
+        return f"{float(value):.0%}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def fmt_model_rank(value) -> str:
+    if value is None:
+        return "模型未覆盖"
+    try:
+        return f"{float(value):.1%}"
     except (TypeError, ValueError):
         return str(value)

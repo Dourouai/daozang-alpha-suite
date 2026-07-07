@@ -9,6 +9,16 @@ from pathlib import Path
 
 from .content_sources import ManualTextSource, WechatArticleSource
 from .data_health import check_data_health, format_data_health_card, format_data_health_text
+from .data_prewarm import (
+    combine_factor_rows,
+    flow_daily_rows,
+    global_daily_row,
+    load_market_structure,
+    sentiment_daily_rows,
+    snapshot_payload,
+    upsert_csv_rows,
+    write_snapshot_json,
+)
 from .data_sources import (
     AksharePriceSource,
     AkshareMarketRegimeSource,
@@ -99,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
         return global_watch_main(argv[1:])
     if argv and argv[0] == "sync-global-features":
         return sync_global_features_main(argv[1:])
+    if argv and argv[0] == "prewarm-factors":
+        return prewarm_factors_main(argv[1:])
     if argv and argv[0] == "trade-plan":
         return trade_plan_main(argv[1:])
     if argv and argv[0] == "healthcheck":
@@ -650,6 +662,158 @@ def sync_global_features_main(argv: list[str]) -> int:
     if failures:
         print("source warnings: " + "；".join(failures))
     return 0
+
+
+def prewarm_factors_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="Prewarm flow/global/sentiment factor snapshots")
+    parser.add_argument("--symbols", default="", help="comma-separated stock codes")
+    parser.add_argument(
+        "--watchlist",
+        default=os.environ.get("BEICHEN_TRADE_WATCHLIST", "data/watchlists/trade_target_pool_latest.txt"),
+        help="candidate watchlist used for factor prewarm",
+    )
+    parser.add_argument(
+        "--positions",
+        default=os.environ.get("BEICHEN_POSITIONS", "data/positions/current_positions.json"),
+        help="current positions JSON path; holdings are always included",
+    )
+    parser.add_argument("--limit", type=int, default=int(os.environ.get("BEICHEN_PREWARM_FACTOR_LIMIT", "80")), help="max non-position symbols")
+    parser.add_argument("--as-of", default="", help="reference date/time, YYYYMMDD or ISO; default now")
+    parser.add_argument("--disable-flow", action="store_true", help="skip flow snapshot")
+    parser.add_argument("--disable-global", action="store_true", help="skip global linkage snapshot")
+    parser.add_argument("--disable-sentiment", action="store_true", help="skip sentiment/leverage snapshot")
+    parser.add_argument("--disable-market-structure", action="store_true", help="skip broad market structure columns")
+    parser.add_argument("--fred-series", default=os.environ.get("BEICHEN_GLOBAL_FRED_SERIES", ""), help="comma-separated FRED series")
+    parser.add_argument("--yahoo-tickers", default=os.environ.get("BEICHEN_GLOBAL_YAHOO_TICKERS", ""), help="comma-separated Yahoo tickers")
+    parser.add_argument("--global-lookback-days", type=int, default=20, help="Yahoo daily history lookback for snapshot")
+    parser.add_argument("--global-timeout", type=float, default=10.0, help="FRED HTTP timeout")
+    parser.add_argument("--flow-json", default=os.environ.get("BEICHEN_PREWARM_FLOW_JSON", "data/runtime/latest_flow_snapshot.json"))
+    parser.add_argument("--global-json", default=os.environ.get("BEICHEN_PREWARM_GLOBAL_JSON", "data/runtime/latest_global_linkage.json"))
+    parser.add_argument("--sentiment-json", default=os.environ.get("BEICHEN_PREWARM_SENTIMENT_JSON", "data/runtime/latest_sentiment_snapshot.json"))
+    parser.add_argument("--status-json", default=os.environ.get("BEICHEN_PREWARM_FACTOR_STATUS_JSON", "data/runtime/latest_factor_prewarm.json"))
+    parser.add_argument("--flow-daily", default=os.environ.get("BEICHEN_PREWARM_FLOW_DAILY", "data/features/flow_daily.csv"))
+    parser.add_argument("--global-daily", default=os.environ.get("BEICHEN_PREWARM_GLOBAL_DAILY", "data/features/global_linkage_snapshot_daily.csv"))
+    parser.add_argument("--sentiment-daily", default=os.environ.get("BEICHEN_PREWARM_SENTIMENT_DAILY", "data/features/sentiment_daily.csv"))
+    parser.add_argument("--combined-daily", default=os.environ.get("BEICHEN_PREWARM_COMBINED_DAILY", "data/features/beichen_factor_daily.csv"))
+    args = parser.parse_args(argv)
+
+    as_of = parse_as_of(args.as_of)
+    positions = load_positions(args.positions)
+    position_symbols = [str(item["code"]) for item in positions]
+    candidate_symbols = parse_symbols(args.symbols) if args.symbols else read_optional_watchlist(args.watchlist)
+    held = set(position_symbols)
+    if args.limit > 0:
+        limited_candidates = []
+        for symbol in candidate_symbols:
+            if symbol in held or len(limited_candidates) < args.limit:
+                limited_candidates.append(symbol)
+        candidate_symbols = limited_candidates
+    symbols = dedupe(position_symbols + candidate_symbols)
+    if not symbols:
+        print("Error: no symbols to prewarm", file=sys.stderr)
+        return 2
+
+    started_at = datetime.now()
+    statuses: dict[str, dict[str, object]] = {}
+    flow_rows: list[dict[str, object]] = []
+    sentiment_rows: list[dict[str, object]] = []
+    global_row: dict[str, object] | None = None
+
+    if args.disable_flow:
+        statuses["flow"] = {"status": "skipped"}
+    else:
+        try:
+            flow_snapshot = AkshareFlowSource(symbols=symbols, as_of=as_of).load()
+            write_snapshot_json(args.flow_json, snapshot_payload("flow", as_of, symbols, flow_snapshot))
+            flow_rows = flow_daily_rows(flow_snapshot, symbols, as_of)
+            upsert_csv_rows(args.flow_daily, flow_rows, key_fields=("date", "code"))
+            statuses["flow"] = {
+                "status": "ok",
+                "rows": len(flow_rows),
+                "health": list(flow_snapshot.source_health),
+                "json": args.flow_json,
+                "daily": args.flow_daily,
+            }
+        except Exception as exc:
+            write_snapshot_json(args.flow_json, snapshot_payload("flow", as_of, symbols, None, error=f"{type(exc).__name__}: {exc}"))
+            statuses["flow"] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+
+    if args.disable_global:
+        statuses["global"] = {"status": "skipped"}
+    else:
+        try:
+            global_snapshot = GlobalLinkageSource(
+                fred_series=resolve_fred_series(args.fred_series),
+                yahoo_tickers=resolve_yahoo_tickers(args.yahoo_tickers),
+                lookback_days=args.global_lookback_days,
+                timeout=args.global_timeout,
+            ).load()
+            write_snapshot_json(args.global_json, snapshot_payload("global_linkage", as_of, symbols, global_snapshot))
+            global_row = global_daily_row(global_snapshot, as_of)
+            upsert_csv_rows(args.global_daily, [global_row], key_fields=("date",))
+            statuses["global"] = {
+                "status": "ok",
+                "posture": global_snapshot.posture,
+                "score": global_snapshot.score,
+                "signals": list(global_snapshot.signals),
+                "json": args.global_json,
+                "daily": args.global_daily,
+            }
+        except Exception as exc:
+            write_snapshot_json(args.global_json, snapshot_payload("global_linkage", as_of, symbols, None, error=f"{type(exc).__name__}: {exc}"))
+            statuses["global"] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+
+    if args.disable_sentiment:
+        statuses["sentiment"] = {"status": "skipped"}
+    else:
+        try:
+            sentiment_snapshot = AkshareSentimentSource(symbols=symbols, as_of=as_of).load()
+            market_structure = None if args.disable_market_structure else load_market_structure(as_of)
+            write_snapshot_json(
+                args.sentiment_json,
+                {
+                    **snapshot_payload("sentiment", as_of, symbols, sentiment_snapshot),
+                    "market_structure": market_structure,
+                },
+            )
+            sentiment_rows = sentiment_daily_rows(sentiment_snapshot, symbols, as_of, market_structure)
+            upsert_csv_rows(args.sentiment_daily, sentiment_rows, key_fields=("date", "code"))
+            statuses["sentiment"] = {
+                "status": "ok",
+                "rows": len(sentiment_rows),
+                "health": list(sentiment_snapshot.source_health),
+                "market_structure": "" if market_structure is None else market_structure.detail,
+                "json": args.sentiment_json,
+                "daily": args.sentiment_daily,
+            }
+        except Exception as exc:
+            write_snapshot_json(args.sentiment_json, snapshot_payload("sentiment", as_of, symbols, None, error=f"{type(exc).__name__}: {exc}"))
+            statuses["sentiment"] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+
+    combined_rows = combine_factor_rows(flow_rows, sentiment_rows, global_row)
+    if combined_rows:
+        upsert_csv_rows(args.combined_daily, combined_rows, key_fields=("date", "code"))
+    status_payload = {
+        "status": "ok" if not any(item.get("status") == "failed" for item in statuses.values()) else "partial",
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": datetime.now().isoformat(timespec="seconds"),
+        "as_of": as_of.isoformat(timespec="seconds"),
+        "symbols": len(symbols),
+        "positions": len(position_symbols),
+        "candidate_limit": args.limit,
+        "combined_rows": len(combined_rows),
+        "combined_daily": args.combined_daily,
+        "sources": statuses,
+    }
+    write_snapshot_json(args.status_json, status_payload)
+
+    print(f"factor prewarm status: {status_payload['status']}")
+    print(f"symbols: {len(symbols)}")
+    print(f"combined rows: {len(combined_rows)}")
+    print(f"status: {args.status_json}")
+    if combined_rows:
+        print(f"combined daily: {args.combined_daily}")
+    return 0 if status_payload["status"] in {"ok", "partial"} else 2
 
 
 def healthcheck_main(argv: list[str]) -> int:
@@ -1683,7 +1847,10 @@ def resolve_opinion_as_of(raw: str, fallback: datetime) -> datetime:
 def parse_as_of(raw: str | None) -> datetime:
     if not raw:
         return datetime.now()
-    return datetime.strptime(raw, "%Y%m%d").replace(hour=23, minute=59, second=59)
+    parsed = parse_optional_datetime(raw)
+    if parsed is None:
+        return datetime.now()
+    return parsed
 
 
 def parse_optional_datetime(raw: str) -> datetime | None:

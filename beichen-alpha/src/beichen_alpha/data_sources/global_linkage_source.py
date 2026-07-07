@@ -39,11 +39,22 @@ DEFAULT_FRED_SERIES = (
 DEFAULT_YAHOO_TICKERS = (
     YahooTicker("^GSPC", "标普500", "美股"),
     YahooTicker("^IXIC", "纳斯达克", "美股"),
+    YahooTicker("^DJI", "道琼斯", "美股"),
     YahooTicker("^HSI", "恒生指数", "港股"),
     YahooTicker("^VIX", "VIX波动率", "风险偏好"),
     YahooTicker("USDCNH=X", "美元/离岸人民币", "汇率"),
     YahooTicker("GC=F", "COMEX黄金", "商品"),
     YahooTicker("CL=F", "WTI原油", "商品"),
+    YahooTicker("HG=F", "COMEX铜", "商品"),
+    YahooTicker("SOXX", "美国半导体ETF", "美股行业"),
+    YahooTicker("SMH", "美国半导体ETF", "美股行业"),
+    YahooTicker("XBI", "美国生物科技ETF", "美股行业"),
+    YahooTicker("XLF", "美国金融ETF", "美股行业"),
+    YahooTicker("XLE", "美国能源ETF", "美股行业"),
+    YahooTicker("KWEB", "中概互联网ETF", "中国资产"),
+    YahooTicker("FXI", "中国大盘ETF", "中国资产"),
+    YahooTicker("MCHI", "中国市场ETF", "中国资产"),
+    YahooTicker("ASHR", "A股ETF", "中国资产"),
 )
 
 

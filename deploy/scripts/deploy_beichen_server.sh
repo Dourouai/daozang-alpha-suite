@@ -17,6 +17,7 @@ ENABLE_FOCUS1000_TIMER="${ENABLE_FOCUS1000_TIMER:-$ENABLE_OPTIONAL_TIMERS}"
 ENABLE_POSITION1030_TIMER="${ENABLE_POSITION1030_TIMER:-$ENABLE_OPTIONAL_TIMERS}"
 ENABLE_INTRADAY_MONITOR_TIMER="${ENABLE_INTRADAY_MONITOR_TIMER:-$ENABLE_OPTIONAL_TIMERS}"
 ENABLE_POOL1540_TIMER="${ENABLE_POOL1540_TIMER:-$ENABLE_OPTIONAL_TIMERS}"
+ENABLE_DATA_PREWARM_TIMER="${ENABLE_DATA_PREWARM_TIMER:-$ENABLE_OPTIONAL_TIMERS}"
 
 run_root() {
   if [ "$(id -u)" -eq 0 ]; then
@@ -107,6 +108,7 @@ enable_timer_if "$ENABLE_FOCUS1000_TIMER" beichen-alpha-focus1000.timer
 enable_timer_if "$ENABLE_POSITION1030_TIMER" beichen-alpha-position1030.timer
 enable_timer_if "$ENABLE_INTRADAY_MONITOR_TIMER" beichen-alpha-intraday-monitor.timer
 enable_timer_if "$ENABLE_POOL1540_TIMER" beichen-alpha-pool1540.timer
+enable_timer_if "$ENABLE_DATA_PREWARM_TIMER" beichen-alpha-data-prewarm.timer
 
 if [ "$ENABLE_CHAT_SERVICE" = "true" ]; then
   run_root systemctl enable beichen-alpha-chat.service
