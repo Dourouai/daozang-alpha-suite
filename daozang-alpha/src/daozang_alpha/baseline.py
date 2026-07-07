@@ -668,8 +668,12 @@ def _ordered_export_columns(frame: pd.DataFrame) -> list[str]:
         "pct_rank_1d",
         "pct_rank_3d",
         "pct_rank_5d",
+        "expected_return_1d",
+        "up_probability_1d",
         "expected_return_3d",
         "up_probability_3d",
+        "expected_return_5d",
+        "up_probability_5d",
     ]
     return [column for column in preferred if column in frame.columns] + [
         column for column in frame.columns if column not in preferred
@@ -682,7 +686,7 @@ def _safe_float(value: Any) -> float:
     return float(value)
 
 
-def _build_return_calibrator(valid_score: pd.Series, valid_label: pd.Series):
+def _build_return_calibrator(valid_score: pd.Series, valid_label: pd.Series, suffix: str = PRIMARY_HORIZON):
     frame = pd.concat(
         [
             valid_score.rename("score"),
@@ -691,13 +695,13 @@ def _build_return_calibrator(valid_score: pd.Series, valid_label: pd.Series):
         axis=1,
     ).dropna()
     if frame.empty:
-        return _constant_return_calibrator(0.0, 0.5)
+        return _constant_return_calibrator(0.0, 0.5, suffix=suffix)
 
     frame = frame.sort_values("score")
     global_up_probability = float((frame["label"] > 0).mean())
     global_expected_return = float(frame["label"].mean())
     if len(frame) < 20:
-        return _constant_return_calibrator(global_expected_return, global_up_probability)
+        return _constant_return_calibrator(global_expected_return, global_up_probability, suffix=suffix)
 
     bin_count = min(10, max(1, len(frame) // 20))
     ranked = pd.Series(range(len(frame)), index=frame.index)
@@ -716,7 +720,7 @@ def _build_return_calibrator(valid_score: pd.Series, valid_label: pd.Series):
             }
         )
     if not bins:
-        return _constant_return_calibrator(global_expected_return, global_up_probability)
+        return _constant_return_calibrator(global_expected_return, global_up_probability, suffix=suffix)
 
     def calibrate(target_score: pd.Series) -> pd.DataFrame:
         expected_values = []
@@ -736,8 +740,8 @@ def _build_return_calibrator(valid_score: pd.Series, valid_label: pd.Series):
             probabilities.append(selected["up_probability"])
         return pd.DataFrame(
             {
-                "expected_return_3d": expected_values,
-                "up_probability_3d": probabilities,
+                f"expected_return_{suffix}": expected_values,
+                f"up_probability_{suffix}": probabilities,
             },
             index=target_score.index,
         )
@@ -745,12 +749,12 @@ def _build_return_calibrator(valid_score: pd.Series, valid_label: pd.Series):
     return calibrate
 
 
-def _constant_return_calibrator(expected_return: float, up_probability: float):
+def _constant_return_calibrator(expected_return: float, up_probability: float, suffix: str = PRIMARY_HORIZON):
     def calibrate(target_score: pd.Series) -> pd.DataFrame:
         return pd.DataFrame(
             {
-                "expected_return_3d": [expected_return for _ in range(len(target_score))],
-                "up_probability_3d": [
+                f"expected_return_{suffix}": [expected_return for _ in range(len(target_score))],
+                f"up_probability_{suffix}": [
                     max(0.01, min(0.99, up_probability)) for _ in range(len(target_score))
                 ],
             },
@@ -807,16 +811,23 @@ def _train_single_model(
 
         test_result = pd.DataFrame(test_predictions)
         infer_result = pd.DataFrame(infer_predictions) if infer_predictions else None
-        if "score_3d" in valid_predictions:
-            valid_score = valid_predictions["score_3d"]
-            valid_label_column = _resolve_label_column(valid_y, PRIMARY_LABEL_NAME)
-            if valid_label_column is not None:
-                calibrator = _build_return_calibrator(valid_score, valid_y[valid_label_column])
-                test_calibration = calibrator(test_result["score_3d"])
-                test_result = pd.concat([test_result, test_calibration], axis=1)
-                if infer_result is not None and "score_3d" in infer_result:
-                    infer_calibration = calibrator(infer_result["score_3d"])
-                    infer_result = pd.concat([infer_result, infer_calibration], axis=1)
+        for suffix, _days, label_name, _expression in MULTI_HORIZON_SPECS:
+            score_column = f"score_{suffix}"
+            if score_column not in valid_predictions or score_column not in test_result:
+                continue
+            valid_label_column = _resolve_label_column(valid_y, label_name)
+            if valid_label_column is None:
+                continue
+            calibrator = _build_return_calibrator(
+                valid_predictions[score_column],
+                valid_y[valid_label_column],
+                suffix=suffix,
+            )
+            test_calibration = calibrator(test_result[score_column])
+            test_result = pd.concat([test_result, test_calibration], axis=1)
+            if infer_result is not None and score_column in infer_result:
+                infer_calibration = calibrator(infer_result[score_column])
+                infer_result = pd.concat([infer_result, infer_calibration], axis=1)
         return PredictionBundle(test=test_result, infer=infer_result)
 
     label_column = _resolve_label_column(train_y, "LABEL0") or train_y.columns[0]

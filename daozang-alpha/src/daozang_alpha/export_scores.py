@@ -27,8 +27,12 @@ OPTIONAL_COLUMNS = (
     "pct_rank_1d",
     "pct_rank_3d",
     "pct_rank_5d",
+    "expected_return_1d",
+    "up_probability_1d",
     "expected_return_3d",
     "up_probability_3d",
+    "expected_return_5d",
+    "up_probability_5d",
 )
 
 

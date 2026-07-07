@@ -41,6 +41,8 @@ class HoldingPlan:
     pnl_pct: float
     action: str
     trigger: str
+    release_score: int = 0
+    release_reason: str = ""
     price_source: str = "日线"
     execution_detail: str = ""
     execution_score: int = 0
@@ -229,6 +231,7 @@ def build_three_day_trade_plan(
     notes_list.extend(risk_posture.notes)
     if model_coverage is not None:
         notes_list.append(model_coverage.detail)
+    holding_plans = adjust_holding_release_scores_for_opportunity(holding_plans, selected)
     return ThreeDayTradePlan(
         capital=capital,
         invested_cost=invested_cost,
@@ -342,6 +345,21 @@ def build_holding_plan(
         action = "继续持有"
         trigger = f"仍在确认价 {confirm:.2f} 上方，继续观察；不加仓。"
 
+    prediction = prediction_from_recommendation(recommendation)
+    release_score, release_reason = score_holding_release(
+        action=action,
+        price=price,
+        cost=cost,
+        confirm=confirm,
+        stop=stop,
+        target=target,
+        pnl_pct=pnl_pct,
+        holding_trade_days=holding_trade_days,
+        model_pct_rank=model_pct_rank,
+        execution_score=execution_score,
+        prediction=prediction,
+        recommendation=recommendation,
+    )
     final = decide_holding_action(
         SimpleNamespace(
             action=action,
@@ -352,7 +370,6 @@ def build_holding_plan(
             model_pct_rank=model_pct_rank,
         )
     )
-    prediction = prediction_from_recommendation(recommendation)
     return HoldingPlan(
         code=code,
         name=name,
@@ -368,6 +385,8 @@ def build_holding_plan(
         pnl_pct=pnl_pct,
         action=action,
         trigger=trigger,
+        release_score=release_score,
+        release_reason=release_reason,
         price_source=price_source,
         execution_detail=execution_detail,
         execution_score=execution_score,
@@ -399,6 +418,134 @@ def has_low_capital_efficiency(
         return False
     confirm_gap = price / confirm - 1
     return price >= confirm and confirm_gap <= 0.006
+
+
+def score_holding_release(
+    *,
+    action: str,
+    price: float,
+    cost: float,
+    confirm: float,
+    stop: float,
+    target: float,
+    pnl_pct: float,
+    holding_trade_days: int | None,
+    model_pct_rank: float | None,
+    execution_score: int,
+    prediction: dict[str, Any],
+    recommendation: Recommendation | None,
+) -> tuple[int, str]:
+    score = 0
+    reasons: list[str] = []
+
+    action_base = {
+        "退出优先": 100,
+        "减仓优先": 82,
+        "时间止损优先": 74,
+        "买点弱化": 68,
+        "资金效率观察": 58,
+        "止盈优先": 52,
+        "继续持有": 18,
+        "等待行情": 10,
+    }.get(action, 25)
+    score += action_base
+    reasons.append(f"动作基准 {action_base}")
+
+    if price > 0 and stop > 0 and price < stop:
+        score += 25
+        reasons.append("跌破风控线")
+    elif price > 0 and confirm > 0 and price < confirm:
+        score += 16
+        reasons.append("跌回确认价")
+    elif price > 0 and confirm > 0 and price / confirm - 1 <= 0.006:
+        score += 8
+        reasons.append("贴近确认区，资金效率偏低")
+
+    if target > 0 and price >= target:
+        score += 16
+        reasons.append("到达目标区，需要保护利润")
+    if holding_trade_days is not None and holding_trade_days >= 3 and pnl_pct < 0.01:
+        score += 16
+        reasons.append("第3日仍未形成有效盈利")
+    elif holding_trade_days is not None and holding_trade_days >= 2 and pnl_pct < 0.003:
+        score += 8
+        reasons.append("第2日收益不足")
+
+    if model_pct_rank is not None:
+        if model_pct_rank < 0.30:
+            score += 16
+            reasons.append("道藏分低于30%")
+        elif model_pct_rank < 0.50:
+            score += 6
+            reasons.append("道藏分不强")
+        elif model_pct_rank >= 0.75:
+            score -= 8
+            reasons.append("道藏分较强，释放分下调")
+
+    avg_return = prediction.get("prediction_avg_return")
+    up_prob = prediction.get("prediction_up_prob")
+    if avg_return is not None and up_prob is not None:
+        if avg_return < -0.003 and up_prob < 0.48:
+            score += 14
+            reasons.append("历史校准为负期望")
+        elif avg_return > 0.006 and up_prob >= 0.55:
+            score -= 8
+            reasons.append("历史校准仍有正期望")
+
+    if pnl_pct <= -0.015:
+        score += 10
+        reasons.append("浮亏扩大")
+    elif pnl_pct >= 0.025:
+        score += 7
+        reasons.append("已有浮盈，考虑保护")
+
+    if execution_score <= -12:
+        score += 8
+        reasons.append("盘中执行因子转弱")
+    elif execution_score >= 12:
+        score -= 5
+        reasons.append("盘中执行因子仍支持持有")
+
+    if recommendation is not None and "短线弹性" in recommendation.risk:
+        score += 10
+        reasons.append("短线弹性不足")
+
+    bounded = max(0, min(100, int(round(score))))
+    label = release_score_label(bounded)
+    return bounded, f"{label}: " + "；".join(dict.fromkeys(reasons))
+
+
+def release_score_label(score: int) -> str:
+    if score >= 80:
+        return "释放优先"
+    if score >= 60:
+        return "倾向减仓"
+    if score >= 40:
+        return "效率观察"
+    return "继续持有"
+
+
+def adjust_holding_release_scores_for_opportunity(
+    holding_plans: Iterable[HoldingPlan],
+    buy_plans: Iterable[BuyPlan],
+) -> tuple[HoldingPlan, ...]:
+    buy_tuple = tuple(buy_plans)
+    if not buy_tuple:
+        return tuple(holding_plans)
+    strongest = max(candidate_utility(item, set(), set()) for item in buy_tuple)
+    if strongest < 125:
+        return tuple(holding_plans)
+
+    adjusted: list[HoldingPlan] = []
+    for item in holding_plans:
+        if item.release_score < 40:
+            adjusted.append(item)
+            continue
+        bump = 10 if strongest >= 155 else 6
+        new_score = min(100, item.release_score + bump)
+        new_reason = item.release_reason + f"；更强候选机会成本 +{bump}"
+        adjusted.append(replace(item, release_score=new_score, release_reason=new_reason))
+    return tuple(adjusted)
 
 
 def is_low_model_rank(model_pct_rank: float | None) -> bool:
@@ -735,7 +882,7 @@ def releasable_holding_value(holding_plans: Iterable[HoldingPlan]) -> float:
     return sum(
         max(item.price, 0.0) * item.shares
         for item in holding_plans
-        if item.action in releasable_actions
+        if item.action in releasable_actions or item.release_score >= 70
     )
 
 

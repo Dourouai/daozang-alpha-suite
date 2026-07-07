@@ -254,11 +254,13 @@ def holding_plan_to_record(
                 "model_pct_rank": item.model_pct_rank,
                 "prediction": plan_prediction_to_dict(item),
                 "execution_score": item.execution_score,
+                "release_score": item.release_score,
             },
             "portfolio": portfolio_context(plan),
             "rationale": {
                 "trigger": item.trigger,
                 "execution_detail": item.execution_detail,
+                "release_reason": item.release_reason,
             },
             "factor_scores": [factor_score_to_dict(score) for score in item.factor_scores],
             "execution": plan_execution_to_dict(item),

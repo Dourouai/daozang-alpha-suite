@@ -50,12 +50,14 @@ class ExportScoresTest(unittest.TestCase):
                             "trade_date,instrument,score,rank,pct_rank,model,feature_set,"
                             "horizon_days,universe,score_1d,score_3d,score_5d,"
                             "pct_rank_1d,pct_rank_3d,pct_rank_5d,"
-                            "expected_return_3d,up_probability_3d"
+                            "expected_return_1d,up_probability_1d,"
+                            "expected_return_3d,up_probability_3d,"
+                            "expected_return_5d,up_probability_5d"
                         ),
                         (
                             "2026-07-06,688167,0.031,1,0.98,lightgbm,Alpha158,"
                             "3,active_universe,0.011,0.031,0.026,"
-                            "0.90,0.98,0.94,0.012,0.63"
+                            "0.90,0.98,0.94,0.004,0.56,0.012,0.63,0.018,0.65"
                         ),
                     ]
                 ),
@@ -75,8 +77,12 @@ class ExportScoresTest(unittest.TestCase):
         self.assertEqual(rows[0]["instrument"], "SH688167")
         self.assertEqual(rows[0]["score_3d"], "0.031")
         self.assertEqual(rows[0]["pct_rank_3d"], "0.98")
+        self.assertEqual(rows[0]["expected_return_1d"], "0.004")
+        self.assertEqual(rows[0]["up_probability_1d"], "0.56")
         self.assertEqual(rows[0]["expected_return_3d"], "0.012")
         self.assertEqual(rows[0]["up_probability_3d"], "0.63")
+        self.assertEqual(rows[0]["expected_return_5d"], "0.018")
+        self.assertEqual(rows[0]["up_probability_5d"], "0.65")
 
     def test_normalize_instrument_accepts_common_a_share_formats(self):
         self.assertEqual(normalize_instrument("600938"), "SH600938")

@@ -20,8 +20,12 @@ class BaselineExportShapeTests(TestCase):
                 "score_1d": [0.01, 0.02],
                 "score_3d": [0.03, 0.01],
                 "score_5d": [0.02, 0.04],
+                "expected_return_1d": [0.004, -0.001],
+                "up_probability_1d": [0.56, 0.48],
                 "expected_return_3d": [0.011, -0.002],
                 "up_probability_3d": [0.62, 0.47],
+                "expected_return_5d": [0.018, -0.004],
+                "up_probability_5d": [0.65, 0.45],
             },
             index=index,
         )
@@ -34,8 +38,12 @@ class BaselineExportShapeTests(TestCase):
         self.assertIn("score_1d", latest.columns)
         self.assertIn("score_3d", latest.columns)
         self.assertIn("score_5d", latest.columns)
+        self.assertIn("expected_return_1d", latest.columns)
+        self.assertIn("up_probability_1d", latest.columns)
         self.assertIn("expected_return_3d", latest.columns)
         self.assertIn("up_probability_3d", latest.columns)
+        self.assertIn("expected_return_5d", latest.columns)
+        self.assertIn("up_probability_5d", latest.columns)
 
     def test_extra_features_are_loaded_and_joined_by_date_and_instrument(self) -> None:
         with TemporaryDirectory() as tmp:

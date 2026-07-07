@@ -8,6 +8,7 @@ cd "$PROJECT_DIR"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 
 mkdir -p logs data/runtime data/decision_logs
+mkdir -p reports
 
 if [ -f "config/local.env" ]; then
   set -a
@@ -32,11 +33,16 @@ RUN_DAOZANG_EXPORT_SCORES="${RUN_DAOZANG_EXPORT_SCORES:-true}"
 RUN_POOL_REFRESH="${RUN_POOL_REFRESH:-false}"
 RUN_TRADE_PLAN="${RUN_TRADE_PLAN:-true}"
 RUN_FOCUS_CHECK="${RUN_FOCUS_CHECK:-false}"
+RUN_OUTCOME_BACKFILL="${RUN_OUTCOME_BACKFILL:-true}"
+RUN_STRATEGY_PERFORMANCE="${RUN_STRATEGY_PERFORMANCE:-true}"
 BEICHEN_BROAD_WATCHLIST="${BEICHEN_BROAD_WATCHLIST:-data/watchlists/broad_target_pool_latest.txt}"
 BEICHEN_TRADE_WATCHLIST="${BEICHEN_TRADE_WATCHLIST:-$BEICHEN_BROAD_WATCHLIST}"
 BEICHEN_FEISHU_CHANNEL_MODE="${BEICHEN_FEISHU_CHANNEL_MODE:-trade_decisions}"
 BEICHEN_FEISHU_SEND_POOL_REFRESH="${BEICHEN_FEISHU_SEND_POOL_REFRESH:-false}"
 BEICHEN_FEISHU_SEND_FOCUS_CHECK="${BEICHEN_FEISHU_SEND_FOCUS_CHECK:-true}"
+BEICHEN_FEISHU_SEND_STRATEGY_PERFORMANCE="${BEICHEN_FEISHU_SEND_STRATEGY_PERFORMANCE:-false}"
+BEICHEN_STRATEGY_PERFORMANCE_REPORT="${BEICHEN_STRATEGY_PERFORMANCE_REPORT:-reports/strategy_performance_latest.txt}"
+BEICHEN_STRATEGY_PERFORMANCE_MIN_SAMPLES="${BEICHEN_STRATEGY_PERFORMANCE_MIN_SAMPLES:-1}"
 DAOZANG_UNIVERSE_LIMIT="${DAOZANG_UNIVERSE_LIMIT:-800}"
 BEICHEN_BROAD_POOL_SIZE="${BEICHEN_BROAD_POOL_SIZE:-$DAOZANG_UNIVERSE_LIMIT}"
 BEICHEN_BROAD_SCAN_LIMIT="${BEICHEN_BROAD_SCAN_LIMIT:-$DAOZANG_UNIVERSE_LIMIT}"
@@ -50,6 +56,7 @@ DAOZANG_BEICHEN_FEATURES_PATH="${DAOZANG_BEICHEN_FEATURES_PATH:-data/features/be
 trade_notify_args=()
 pool_notify_args=()
 focus_notify_args=()
+strategy_notify_args=()
 if [ -n "${FEISHU_WEBHOOK:-}" ] && [ "$BEICHEN_FEISHU_CHANNEL_MODE" != "off" ]; then
   trade_notify_args=(--notify feishu)
   if [ "$BEICHEN_FEISHU_CHANNEL_MODE" = "all" ] || [ "$BEICHEN_FEISHU_SEND_POOL_REFRESH" = "true" ]; then
@@ -57,6 +64,9 @@ if [ -n "${FEISHU_WEBHOOK:-}" ] && [ "$BEICHEN_FEISHU_CHANNEL_MODE" != "off" ]; 
   fi
   if [ "$BEICHEN_FEISHU_SEND_FOCUS_CHECK" != "false" ]; then
     focus_notify_args=(--notify feishu)
+  fi
+  if [ "$BEICHEN_FEISHU_CHANNEL_MODE" = "all" ] || [ "$BEICHEN_FEISHU_SEND_STRATEGY_PERFORMANCE" = "true" ]; then
+    strategy_notify_args=(--notify feishu)
   fi
 fi
 
@@ -254,4 +264,18 @@ if [ "$RUN_FOCUS_CHECK" = "true" ]; then
     --realtime \
     --notify-title "北辰 Alpha 重点池盘中检查" \
     "${focus_notify_args[@]}"
+fi
+
+if [ "$RUN_OUTCOME_BACKFILL" = "true" ]; then
+  run_optional_step "backfill-outcomes" env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "$PYTHON_BIN" -m beichen_alpha backfill-outcomes \
+    --horizons 1,3,5 \
+    --quiet
+fi
+
+if [ "$RUN_STRATEGY_PERFORMANCE" = "true" ]; then
+  run_optional_step "strategy-performance" env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "$PYTHON_BIN" -m beichen_alpha strategy-performance \
+    --horizons 1,3,5 \
+    --min-samples "$BEICHEN_STRATEGY_PERFORMANCE_MIN_SAMPLES" \
+    --out "$BEICHEN_STRATEGY_PERFORMANCE_REPORT" \
+    "${strategy_notify_args[@]}"
 fi

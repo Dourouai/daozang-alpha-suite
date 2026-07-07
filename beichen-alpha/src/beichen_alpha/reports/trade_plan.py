@@ -38,6 +38,7 @@ def render_three_day_trade_plan(plan: ThreeDayTradePlan) -> str:
                 ),
                 f"  确认 {item.confirm:.2f} | 止损 {item.stop:.2f} | 目标 {item.target:.2f}",
                 f"  入场 {entry_text} | 持仓 {holding_days_text}",
+                f"  释放分: {item.release_score}/100 | {item.release_reason or '-'}",
                 f"  {item.execution_detail}",
                 f"  概率预测: {format_prediction(item)}",
                 f"  触发: {item.trigger}",

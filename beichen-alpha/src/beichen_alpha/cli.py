@@ -777,6 +777,9 @@ def strategy_performance_main(argv: list[str]) -> int:
     parser.add_argument("--log", default="", help="decision log JSONL path; defaults to backfilled log when present")
     parser.add_argument("--horizons", default="1,3,5", help="comma-separated forward horizons in trading days")
     parser.add_argument("--min-samples", type=int, default=1, help="minimum samples for a bucket to be displayed")
+    parser.add_argument("--out", default="", help="optional report text output path")
+    parser.add_argument("--notify", choices=["none", "feishu"], default="none", help="send report to Feishu")
+    parser.add_argument("--notify-title", default="北辰 Alpha 策略复盘归因报告", help="Feishu text title")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
     args = parser.parse_args(argv)
 
@@ -790,6 +793,7 @@ def strategy_performance_main(argv: list[str]) -> int:
             min_samples=args.min_samples,
         )
         summary["log_path"] = str(log_path)
+        report_text = render_strategy_performance_report(summary)
     except Exception as exc:
         print(f"Error: strategy-performance failed ({type(exc).__name__}): {exc}", file=sys.stderr)
         return 2
@@ -798,9 +802,23 @@ def strategy_performance_main(argv: list[str]) -> int:
         import json as _json
         print(_json.dumps(summary, ensure_ascii=False, indent=2, default=str))
     else:
-        print(render_strategy_performance_report(summary))
+        print(report_text)
         print(f"Log path: {log_path}")
-    return 0 if summary.get("records_with_outcome", 0) > 0 else 1
+    if args.out:
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(report_text + f"\nLog path: {log_path}\n", encoding="utf-8")
+    if args.notify == "feishu":
+        from .notifiers import send_text
+
+        send_text(args.notify_title + "\n" + truncate_text_for_feishu(report_text))
+    return 0
+
+
+def truncate_text_for_feishu(value: str, limit: int = 3500) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: limit - 40].rstrip() + "\n...（报告过长，已截断）"
 
 
 def resolve_strategy_performance_log(value: str) -> Path:
