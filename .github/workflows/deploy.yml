@@ -46,7 +46,7 @@ jobs:
         if: steps.deploy_secrets.outputs.deploy_enabled == 'true'
         run: |
           ssh -i ~/.ssh/daozang_deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "INSTALL_DAOZANG_RESEARCH='$DEPLOY_INSTALL_DAOZANG_RESEARCH' ENABLE_OPTIONAL_TIMERS='$DEPLOY_ENABLE_OPTIONAL_TIMERS' bash -s" <<'REMOTE'
+            "INSTALL_DAOZANG_RESEARCH='$DEPLOY_INSTALL_DAOZANG_RESEARCH' ENABLE_OPTIONAL_TIMERS='$DEPLOY_ENABLE_OPTIONAL_TIMERS' DEPLOY_REVISION='$GITHUB_SHA' bash -s" <<'REMOTE'
           set -euo pipefail
           export APP_DIR="/www/wwwroot/daozang-alpha-suite"
           export BRANCH="main"
@@ -68,6 +68,10 @@ jobs:
             --exclude='./daozang-alpha/data' \
             --exclude='./daozang-alpha/reports' \
             -cf - . | tar -C "$APP_DIR" -xf -
+
+          if [ -n "${DEPLOY_REVISION:-}" ]; then
+            printf '%s\n' "$DEPLOY_REVISION" > "$APP_DIR/.deployed_revision"
+          fi
 
           cd "$APP_DIR"
           SKIP_GIT_UPDATE=true bash deploy/scripts/deploy_beichen_server.sh

@@ -94,6 +94,7 @@ else
 fi
 
 cd "$APP_DIR"
+find "$APP_DIR" -type f -name '._*' -delete 2>/dev/null || true
 for unit in deploy/systemd/beichen-alpha*.service deploy/systemd/beichen-alpha*.timer; do
   run_root cp "$unit" /etc/systemd/system/
 done
