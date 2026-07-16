@@ -1,9 +1,8 @@
 name: Deploy daocang Bot
 
 on:
-  push:
-    branches:
-      - main
+  # Server deployment is paused. Keep an explicit manual recovery path without
+  # recreating the deleted BaoTa deployment on every push to main.
   workflow_dispatch:
 
 concurrency:
